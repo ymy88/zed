@@ -82,6 +82,7 @@ members = [
     "crates/git_graph",
     "crates/git_hosting_providers",
     "crates/git_ui",
+    "crates/vs_git_ui",
     "crates/go_to_line",
     "crates/google_ai",
     "crates/grammars",
@@ -327,6 +328,7 @@ git = { path = "crates/git" }
 git_graph = { path = "crates/git_graph" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
 git_ui = { path = "crates/git_ui" }
+vs_git_ui = { path = "crates/vs_git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 grammars = { path = "crates/grammars" }
