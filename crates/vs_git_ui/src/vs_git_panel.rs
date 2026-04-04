@@ -2,7 +2,6 @@ use git::{
     repository::RepoPath,
     status::{FileStatus, StageStatus},
 };
-use editor::{actions::ExpandAllDiffHunks, Editor};
 use gpui::{
     actions, uniform_list, App, ClickEvent, Context, ElementId, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, ListSizingBehavior, ParentElement, Pixels, Render, SharedString,
@@ -440,8 +439,8 @@ impl VsGitPanel {
         let Some(repo) = self.active_repository.as_ref() else {
             return;
         };
-        let path = repo.read(cx).repo_path_to_project_path(&repo_path, cx);
-        let Some(path) = path else {
+        let project_path = repo.read(cx).repo_path_to_project_path(&repo_path, cx);
+        let Some(project_path) = project_path else {
             return;
         };
         if status.is_deleted() {
@@ -449,32 +448,26 @@ impl VsGitPanel {
         }
 
         let workspace = self.workspace.clone();
-        let open_task = workspace
-            .update(cx, |workspace, cx| {
-                workspace.open_path_preview(path, None, false, false, true, window, cx)
-            })
-            .ok();
+        let project = self.project.clone();
 
-        let Some(open_task) = open_task else {
-            return;
-        };
+        let diff_view_task = crate::vs_file_diff_view::VsFileDiffView::open(
+            project_path,
+            project,
+            workspace.clone(),
+            window,
+            cx,
+        );
 
         cx.spawn_in(window, async move |_, cx| {
-            let item = open_task.await?;
-            if let Some(active_editor) = item.downcast::<Editor>() {
-                if let Some(diff_task) =
-                    active_editor.update(cx, |editor, _cx| editor.wait_for_diff_to_load())
-                {
-                    diff_task.await;
-                }
+            let diff_view = diff_view_task.await?;
 
-                cx.update(|window, cx| {
-                    active_editor.update(cx, |editor, cx| {
-                        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
-                    })
-                })
-                .log_err();
-            }
+            workspace.update_in(cx, |workspace, window, cx| {
+                let pane = workspace.active_pane();
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(diff_view), true, true, None, window, cx);
+                });
+            })?;
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);

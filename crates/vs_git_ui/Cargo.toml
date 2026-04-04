@@ -14,16 +14,20 @@ path = "src/vs_git_ui.rs"
 
 [dependencies]
 anyhow.workspace = true
+buffer_diff.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 git.workspace = true
 gpui.workspace = true
 log.workspace = true
 gpui_util.workspace = true
+language.workspace = true
 menu.workspace = true
+multi_buffer.workspace = true
 panel.workspace = true
 project.workspace = true
 settings.workspace = true
+theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

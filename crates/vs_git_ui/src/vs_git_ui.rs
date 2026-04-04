@@ -1,3 +1,4 @@
+mod vs_file_diff_view;
 mod vs_git_panel;
 mod vs_git_panel_settings;
 
