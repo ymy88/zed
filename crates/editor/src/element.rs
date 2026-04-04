@@ -3497,6 +3497,11 @@ impl EditorElement {
 
             let number = relative_number.unwrap_or(&non_relative_number);
             write!(&mut line_number, "{number}").unwrap();
+            if let Some(suffix) = snapshot.line_number_suffix {
+                if row_info.diff_status.is_some() {
+                    line_number.push_str(suffix);
+                }
+            }
 
             let color = active_rows
                 .get(&display_row)

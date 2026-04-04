@@ -1182,6 +1182,7 @@ pub struct Editor {
     enable_lsp_data: bool,
     enable_runnables: bool,
     show_line_numbers: Option<bool>,
+    line_number_suffix: Option<&'static str>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
@@ -1393,6 +1394,7 @@ pub struct EditorSnapshot {
     show_gutter: bool,
     offset_content: bool,
     show_line_numbers: Option<bool>,
+    pub line_number_suffix: Option<&'static str>,
     number_deleted_lines: bool,
     show_git_diff_gutter: Option<bool>,
     show_code_actions: Option<bool>,
@@ -2411,6 +2413,7 @@ impl Editor {
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: full_mode,
             show_line_numbers: (!full_mode).then_some(false),
+            line_number_suffix: None,
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: !full_mode,
             delegate_expand_excerpts: false,
@@ -3304,6 +3307,7 @@ impl Editor {
             show_gutter: self.show_gutter,
             offset_content: self.offset_content,
             show_line_numbers: self.show_line_numbers,
+            line_number_suffix: self.line_number_suffix,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
             semantic_tokens_enabled: self.semantic_token_state.enabled(),
@@ -21666,6 +21670,10 @@ impl Editor {
     pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut Context<Self>) {
         self.show_line_numbers = Some(show_line_numbers);
         cx.notify();
+    }
+
+    pub fn set_line_number_suffix(&mut self, suffix: &'static str) {
+        self.line_number_suffix = Some(suffix);
     }
 
     pub fn disable_expand_excerpt_buttons(&mut self, cx: &mut Context<Self>) {

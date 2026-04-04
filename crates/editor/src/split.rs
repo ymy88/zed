@@ -584,7 +584,12 @@ impl SplittableEditor {
             editor.disable_runnables();
             editor.disable_diagnostics(cx);
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
+            editor.set_line_number_suffix("-");
             editor
+        });
+
+        self.rhs_editor.update(cx, |editor, _cx| {
+            editor.set_line_number_suffix("+");
         });
 
         lhs_editor.update(cx, |editor, cx| {
@@ -1029,6 +1034,7 @@ impl SplittableEditor {
 
             rhs.set_on_local_selections_changed(None);
             rhs.set_delegate_expand_excerpts(false);
+            rhs.line_number_suffix = None;
             rhs.buffer().update(cx, |buffer, cx| {
                 buffer.set_show_deleted_hunks(true, cx);
                 buffer.set_use_extended_diff_range(false, cx);
