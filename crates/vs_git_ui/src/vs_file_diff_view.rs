@@ -9,8 +9,10 @@ use settings::DiffViewStyle;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use ui::{Color, Icon, IconName, Label, LabelCommon as _};
+use gpui::Font;
+use language::HighlightedText;
 use workspace::{
-    Item, ItemNavHistory, Workspace,
+    Item, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
@@ -245,6 +247,18 @@ impl Item for VsFileDiffView {
                 .rhs_editor()
                 .update(cx, |editor, cx| editor.navigate(data, window, cx))
         })
+    }
+
+    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
+        ToolbarItemLocation::PrimaryLeft
+    }
+
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
+        self.editor
+            .read(cx)
+            .rhs_editor()
+            .read(cx)
+            .breadcrumbs(cx)
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

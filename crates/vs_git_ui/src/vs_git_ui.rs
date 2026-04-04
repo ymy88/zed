@@ -1,3 +1,4 @@
+mod vs_diff_toolbar;
 mod vs_file_diff_view;
 mod vs_git_panel;
 mod vs_git_panel_settings;
@@ -5,6 +6,7 @@ mod vs_git_panel_settings;
 use gpui::App;
 use workspace::Workspace;
 
+pub use vs_diff_toolbar::VsDiffToolbar;
 pub use vs_git_panel::VsGitPanel;
 
 pub fn init(cx: &mut App) {
