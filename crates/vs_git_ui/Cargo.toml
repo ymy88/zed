@@ -18,6 +18,7 @@ editor.workspace = true
 file_icons.workspace = true
 git.workspace = true
 gpui.workspace = true
+log.workspace = true
 gpui_util.workspace = true
 menu.workspace = true
 panel.workspace = true

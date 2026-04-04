@@ -19135,6 +19135,7 @@ dependencies = [
  "git",
  "gpui",
  "gpui_util",
+ "log",
  "menu",
  "panel",
  "project",

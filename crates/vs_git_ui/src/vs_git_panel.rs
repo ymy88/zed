@@ -27,7 +27,9 @@ const UPDATE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(50
 actions!(vs_git_panel, [Close, Toggle, ToggleFocus, SelectNext, SelectPrevious,]);
 
 pub fn register(workspace: &mut Workspace) {
+    log::debug!("vs_git_panel: registering actions");
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
+        log::debug!("vs_git_panel: ToggleFocus action triggered");
         workspace.toggle_panel_focus::<VsGitPanel>(window, cx);
     });
     workspace.register_action(|workspace, _: &Toggle, window, cx| {
@@ -836,8 +838,11 @@ impl VsGitPanel {
         workspace: WeakEntity<Workspace>,
         mut cx: gpui::AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
+        log::debug!("vs_git_panel: loading panel");
         workspace.update_in(&mut cx, |workspace, window, cx| {
-            VsGitPanel::new(workspace, window, cx)
+            let panel = VsGitPanel::new(workspace, window, cx);
+            log::debug!("vs_git_panel: panel created successfully");
+            panel
         })
     }
 }
