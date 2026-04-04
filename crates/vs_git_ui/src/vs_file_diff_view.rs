@@ -18,6 +18,7 @@ use workspace::{
 pub struct VsFileDiffView {
     editor: Entity<SplittableEditor>,
     _project: Entity<Project>,
+    _split_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -36,36 +37,9 @@ impl VsFileDiffView {
         window.spawn(cx, async move |cx| {
             let buffer = buffer_task.await?;
 
-            let entity = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 cx.new(|cx| Self::new(buffer, project, workspace, window, cx))
-            })?;
-
-            // Wait for the editor's diff to load, then split
-            if let Some(diff_task) = entity.update(cx, |this, cx| {
-                this.editor
-                    .read(cx)
-                    .rhs_editor()
-                    .read(cx)
-                    .wait_for_diff_to_load()
-            }) {
-                diff_task.await;
-            }
-
-            entity.update_in(cx, |this, window, cx| {
-                this.editor.update(cx, |editor, cx| {
-                    let rhs_multibuffer = editor.rhs_editor().read(cx).buffer().clone();
-                    let snapshot = rhs_multibuffer.read(cx).snapshot(cx);
-                    let has_diffs = snapshot
-                        .buffers_with_paths()
-                        .any(|(buffer, _)| {
-                            rhs_multibuffer.read(cx).diff_for(buffer.remote_id()).is_some()
-                        });
-                    log::debug!("vs_file_diff_view: split called, has_diffs={has_diffs}");
-                    editor.split(window, cx);
-                });
-            })?;
-
-            Ok(entity)
+            })
         })
     }
 
@@ -95,6 +69,23 @@ impl VsFileDiffView {
             splittable
         });
 
+        let split_task = cx.spawn_in(window, {
+            let editor = editor.clone();
+            async move |_this, cx| {
+                if let Some(diff_task) = editor.update(cx, |editor, cx| {
+                    editor.rhs_editor().read(cx).wait_for_diff_to_load()
+                }) {
+                    diff_task.await;
+                }
+
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.split(window, cx);
+                    })
+                    .ok();
+            }
+        });
+
         let subscriptions = vec![cx.subscribe(
             &editor,
             |_this: &mut Self, _, event: &EditorEvent, cx: &mut Context<Self>| {
@@ -105,6 +96,7 @@ impl VsFileDiffView {
         Self {
             editor,
             _project: project,
+            _split_task: split_task,
             _subscriptions: subscriptions,
         }
     }
