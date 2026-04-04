@@ -79,7 +79,15 @@ impl VsFileDiffView {
             workspace.update_in(cx, |workspace, window, cx| {
                 cx.new(|cx| {
                     Self::new(
-                        buffer, head_text, index_text, diff_kind, project, workspace, window, cx,
+                        buffer,
+                        head_text,
+                        index_text,
+                        unstaged_diff,
+                        diff_kind,
+                        project,
+                        workspace,
+                        window,
+                        cx,
                     )
                 })
             })
@@ -90,6 +98,7 @@ impl VsFileDiffView {
         working_copy_buffer: Entity<language::Buffer>,
         head_text: String,
         index_text: String,
+        unstaged_diff: Entity<BufferDiff>,
         diff_kind: VsDiffKind,
         project: Entity<Project>,
         _workspace: &mut Workspace,
@@ -143,6 +152,10 @@ impl VsFileDiffView {
         let rhs_multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::singleton(rhs_buffer, cx);
             multibuffer.set_show_deleted_hunks(false, cx);
+            if diff_kind == VsDiffKind::Unstaged {
+                // Add the unstaged diff so decorations show working vs index
+                multibuffer.add_diff(unstaged_diff, cx);
+            }
             multibuffer
         });
         let rhs_project = match diff_kind {
@@ -152,6 +165,10 @@ impl VsFileDiffView {
         let rhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(rhs_multibuffer, rhs_project, window, cx);
+            if diff_kind == VsDiffKind::Unstaged {
+                // Prevent auto-loading uncommitted diff (we already added unstaged diff)
+                editor.start_temporary_diff_override();
+            }
             editor.disable_diagnostics(cx);
             editor.set_line_number_suffix("+");
             editor
@@ -206,12 +223,8 @@ impl VsFileDiffView {
             async move |_this, cx| {
                 match diff_kind {
                     VsDiffKind::Unstaged => {
-                        // Wait for RHS auto-loaded diff (working copy vs HEAD)
-                        if let Some(diff_task) = rhs_editor.update(cx, |editor, _cx| {
-                            editor.wait_for_diff_to_load()
-                        }) {
-                            diff_task.await;
-                        }
+                        // Unstaged diff already added to multibuffer in constructor.
+                        // No need to wait.
                     }
                     VsDiffKind::Staged => {
                         // For Staged view, create a diff manually (index vs HEAD)
