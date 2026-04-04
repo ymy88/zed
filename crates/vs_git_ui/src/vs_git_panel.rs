@@ -167,6 +167,9 @@ impl VsGitPanel {
                 conflicts.push(entry);
             } else if staging == StageStatus::Staged {
                 staged.push(entry);
+            } else if staging == StageStatus::PartiallyStaged {
+                staged.push(entry.clone());
+                unstaged.push(entry);
             } else {
                 unstaged.push(entry);
             }
@@ -214,7 +217,7 @@ impl VsGitPanel {
                 self.entries.push(VsGitListEntry::FileEntry {
                     repo_path: entry.repo_path,
                     status: entry.status,
-                    staging: entry.status.staging(),
+                    staging: StageStatus::Unstaged,
                     group: ChangeGroup::Changes,
                 });
             }
