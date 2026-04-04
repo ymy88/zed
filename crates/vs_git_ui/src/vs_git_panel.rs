@@ -425,10 +425,10 @@ impl VsGitPanel {
             return;
         };
         if let VsGitListEntry::FileEntry {
-            repo_path, status, ..
+            repo_path, status, group, ..
         } = entry
         {
-            self.open_file_diff(repo_path.clone(), *status, window, cx);
+            self.open_file_diff(repo_path.clone(), *status, *group, window, cx);
         }
     }
 
@@ -436,6 +436,7 @@ impl VsGitPanel {
         &mut self,
         repo_path: RepoPath,
         status: FileStatus,
+        group: ChangeGroup,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -453,10 +454,16 @@ impl VsGitPanel {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
 
+        let diff_kind = match group {
+            ChangeGroup::StagedChanges => crate::vs_file_diff_view::VsDiffKind::Staged,
+            _ => crate::vs_file_diff_view::VsDiffKind::Unstaged,
+        };
+
         let diff_view_task = crate::vs_file_diff_view::VsFileDiffView::open(
             project_path,
             project,
             workspace.clone(),
+            diff_kind,
             window,
             cx,
         );
@@ -629,7 +636,7 @@ impl VsGitPanel {
                 let click_path = repo_path.clone();
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
-                    this.open_file_diff(click_path.clone(), status, window, cx);
+                    this.open_file_diff(click_path.clone(), status, group, window, cx);
                     cx.notify();
                 })
             })
