@@ -20,6 +20,9 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
+#[derive(Debug, Clone)]
+struct DraggedVsDiffHandle;
+
 #[derive(Clone)]
 struct HunkIconInfo {
     rhs_start_row: u32,
@@ -46,6 +49,7 @@ pub struct VsFileDiffView {
     _project: Entity<Project>,
     focus_handle: FocusHandle,
     syncing_scroll: bool,
+    left_ratio: f32,
     hunk_icons: Vec<HunkIconInfo>,
     rhs_block_ids: Vec<editor::display_map::CustomBlockId>,
     lhs_block_ids: Vec<editor::display_map::CustomBlockId>,
@@ -265,10 +269,27 @@ impl VsFileDiffView {
                     diff_task.await;
                 }
 
-                // Compute spacer blocks from diff hunks
+                // Compute spacer blocks and scroll to first hunk
                 _this
-                    .update(cx, |this, cx| {
+                    .update_in(cx, |this, window, cx| {
                         this.refresh_alignment_blocks(cx);
+
+                        // Scroll to first hunk
+                        let rhs_snapshot = this.rhs_editor.read(cx).buffer().read(cx).snapshot(cx);
+                        if let Some(first_hunk) = rhs_snapshot.diff_hunks().next() {
+                            let row = first_hunk.row_range.start.0;
+                            // Scroll a few lines above the hunk for context
+                            let scroll_row = row.saturating_sub(3) as f32;
+                            let scroll_pos = gpui::Point::new(0.0, scroll_row as f64);
+                            this.syncing_scroll = true;
+                            this.rhs_editor.update(cx, |editor, cx| {
+                                editor.set_scroll_position(scroll_pos, window, cx);
+                            });
+                            this.lhs_editor.update(cx, |editor, cx| {
+                                editor.set_scroll_position(scroll_pos, window, cx);
+                            });
+                            this.syncing_scroll = false;
+                        }
                     })
                     .ok();
             }
@@ -284,6 +305,7 @@ impl VsFileDiffView {
             _project: project,
             focus_handle,
             syncing_scroll: false,
+            left_ratio: 0.5,
             hunk_icons: Vec::new(),
             rhs_block_ids: Vec::new(),
             lhs_block_ids: Vec::new(),
@@ -565,14 +587,29 @@ impl Render for VsFileDiffView {
             );
         }
 
+        let left_ratio = self.left_ratio;
+        let right_ratio = 1.0 - left_ratio;
+
         h_flex()
+            .id("vs-diff-view-container")
             .size_full()
+            .on_drag_move::<DraggedVsDiffHandle>(
+                cx.listener(|this, event: &gpui::DragMoveEvent<DraggedVsDiffHandle>, _window, _cx| {
+                    let bounds = event.bounds;
+                    let drag_x = event.event.position.x;
+                    let bounds_width = bounds.right() - bounds.left();
+                    if bounds_width > px(0.) {
+                        let new_ratio = ((drag_x - bounds.left()) / bounds_width).clamp(0.1, 0.9);
+                        this.left_ratio = new_ratio;
+                    }
+                }),
+            )
             .child(
                 div()
                     .flex_shrink()
                     .min_w_0()
                     .h_full()
-                    .flex_basis(relative(0.5))
+                    .flex_basis(relative(left_ratio))
                     .overflow_hidden()
                     .child(self.lhs_editor.clone()),
             )
@@ -584,6 +621,22 @@ impl Render for VsFileDiffView {
                     .bg(border_color)
                     .relative()
                     .overflow_hidden()
+                    .child(
+                        // Invisible drag handle overlay
+                        div()
+                            .id("vs-diff-resize-handle")
+                            .absolute()
+                            .left(px(-4.))
+                            .w(px(32.))
+                            .h_full()
+                            .cursor_col_resize()
+                            .on_click(cx.listener(|this, event: &gpui::ClickEvent, _window, _cx| {
+                                if event.click_count() >= 2 {
+                                    this.left_ratio = 0.5;
+                                }
+                            }))
+                            .on_drag(DraggedVsDiffHandle, |_, _, _, cx| cx.new(|_| gpui::Empty))
+                    )
                     .children(divider_icons),
             )
             .child(
@@ -591,7 +644,7 @@ impl Render for VsFileDiffView {
                     .flex_shrink()
                     .min_w_0()
                     .h_full()
-                    .flex_basis(relative(0.5))
+                    .flex_basis(relative(right_ratio))
                     .overflow_hidden()
                     .child(self.rhs_editor.clone()),
             )
