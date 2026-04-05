@@ -1,14 +1,16 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, MultiBuffer};
+use editor::{Editor, EditorEvent, MultiBuffer, ToPoint as _};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
     IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription, Task,
     WeakEntity, Window,
 };
-use language::{Capability, HighlightedText};
+use language::HighlightedText;
+use multi_buffer::Anchor;
 use project::{Project, ProjectPath};
 use std::any::{Any, TypeId};
+use std::ops::Range;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, prelude::*};
@@ -17,6 +19,14 @@ use workspace::{
     item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
+
+#[derive(Clone)]
+struct HunkIconInfo {
+    rhs_start_row: u32,
+    hunk_height: u32, // max(rhs_lines, lhs_lines) — total height including spacers
+    rhs_editor: Entity<Editor>,
+    uncommitted_diff: Entity<BufferDiff>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VsDiffKind {
@@ -28,11 +38,17 @@ pub enum VsDiffKind {
 
 pub struct VsFileDiffView {
     lhs_editor: Entity<Editor>,
-    rhs_editor: Entity<Editor>,
+    pub(crate) rhs_editor: Entity<Editor>,
+    _uncommitted_diff: Entity<BufferDiff>,
+    unstaged_diff: Entity<BufferDiff>,
     diff_kind: VsDiffKind,
+    file_path: Option<SharedString>,
     _project: Entity<Project>,
     focus_handle: FocusHandle,
     syncing_scroll: bool,
+    hunk_icons: Vec<HunkIconInfo>,
+    rhs_block_ids: Vec<editor::display_map::CustomBlockId>,
+    lhs_block_ids: Vec<editor::display_map::CustomBlockId>,
     _subscriptions: Vec<Subscription>,
     _setup_task: Task<()>,
 }
@@ -53,7 +69,7 @@ impl VsFileDiffView {
         window.spawn(cx, async move |cx| {
             let buffer = buffer_task.await?;
 
-            // Load both HEAD and index text from git diffs
+            // Load diffs from git
             let uncommitted_diff = project
                 .update(cx, |project, cx| {
                     project.open_uncommitted_diff(buffer.clone(), cx)
@@ -66,23 +82,23 @@ impl VsFileDiffView {
                 })
                 .await?;
 
-            // Read base texts
-            let head_text = uncommitted_diff.read_with(cx, |diff, cx| {
-                let base = diff.base_text_buffer().read(cx);
-                base.text()
+            // Mark unstaged diff so hunks report correct status
+            unstaged_diff.update(cx, |diff, _cx| {
+                diff.set_all_hunks_unstaged(true);
             });
+
+            // Read the index text (base of unstaged diff) for the LHS buffer
             let index_text = unstaged_diff.read_with(cx, |diff, cx| {
-                let base = diff.base_text_buffer().read(cx);
-                base.text()
+                diff.base_text_buffer().read(cx).text()
             });
 
             workspace.update_in(cx, |workspace, window, cx| {
                 cx.new(|cx| {
                     Self::new(
                         buffer,
-                        head_text,
                         index_text,
                         unstaged_diff,
+                        uncommitted_diff,
                         diff_kind,
                         project,
                         workspace,
@@ -96,9 +112,9 @@ impl VsFileDiffView {
 
     fn new(
         working_copy_buffer: Entity<language::Buffer>,
-        head_text: String,
         index_text: String,
         unstaged_diff: Entity<BufferDiff>,
+        uncommitted_diff: Entity<BufferDiff>,
         diff_kind: VsDiffKind,
         project: Entity<Project>,
         _workspace: &mut Workspace,
@@ -107,70 +123,53 @@ impl VsFileDiffView {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        // Save head_text for the Staged setup task before it gets consumed
-        let head_text_for_staged = if diff_kind == VsDiffKind::Staged {
-            Some(head_text.clone())
-        } else {
-            None
-        };
+        // Get file path from working copy buffer for tab title
+        let file_path: Option<SharedString> = working_copy_buffer
+            .read(cx)
+            .file()
+            .and_then(|file| {
+                Some(file.full_path(cx).file_name()?.to_string_lossy().to_string().into())
+            });
 
-        // Determine LHS and RHS content based on diff kind
-        let (lhs_text, rhs_buffer) = match diff_kind {
-            VsDiffKind::Unstaged => {
-                // LHS = index text, RHS = working copy
-                (index_text, working_copy_buffer)
-            }
-            VsDiffKind::Staged => {
-                // LHS = HEAD text, RHS = index text (read-only buffer)
-                let index_buffer = cx.new(|cx| {
-                    let mut buffer = language::Buffer::local(index_text, cx);
-                    buffer.set_capability(Capability::ReadOnly, cx);
-                    buffer
-                });
-                (head_text, index_buffer)
-            }
-        };
-
-        // Create LHS editor (read-only, base text)
+        // LHS: separate read-only buffer with index text (old content)
         let lhs_buffer = cx.new(|cx| {
-            let mut buffer = language::Buffer::local(lhs_text, cx);
-            buffer.set_capability(Capability::ReadOnly, cx);
+            let mut buffer = language::Buffer::local(index_text, cx);
+            buffer.set_capability(language::Capability::ReadOnly, cx);
             buffer
         });
-        let lhs_multibuffer =
-            cx.new(|cx| MultiBuffer::singleton(lhs_buffer, cx));
+        let lhs_multibuffer = cx.new(|cx| {
+            MultiBuffer::singleton(lhs_buffer, cx)
+        });
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer, None, window, cx);
             editor.disable_diagnostics(cx);
             editor.set_show_vertical_scrollbar(false, cx);
+            editor.set_show_breakpoints(false, cx);
             editor.set_line_number_suffix("-");
             editor
         });
 
-        // Create RHS editor
+        // RHS: working copy buffer with unstaged diff
         let rhs_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::singleton(rhs_buffer, cx);
+            let mut multibuffer = MultiBuffer::singleton(working_copy_buffer, cx);
             multibuffer.set_show_deleted_hunks(false, cx);
-            if diff_kind == VsDiffKind::Unstaged {
-                // Add the unstaged diff so decorations show working vs index
-                multibuffer.add_diff(unstaged_diff, cx);
-            }
+            multibuffer.add_diff(unstaged_diff.clone(), cx);
             multibuffer
         });
-        let rhs_project = match diff_kind {
-            VsDiffKind::Unstaged => Some(project.clone()),
-            VsDiffKind::Staged => None,
-        };
         let rhs_editor = cx.new(|cx| {
             let mut editor =
-                Editor::for_multibuffer(rhs_multibuffer, rhs_project, window, cx);
-            if diff_kind == VsDiffKind::Unstaged {
-                // Prevent auto-loading uncommitted diff (we already added unstaged diff)
-                editor.start_temporary_diff_override();
-            }
+                Editor::for_multibuffer(rhs_multibuffer, Some(project.clone()), window, cx);
+            editor.start_temporary_diff_override();
+            editor.set_expand_all_diff_hunks(cx);
             editor.disable_diagnostics(cx);
+            editor.set_show_breakpoints(false, cx);
             editor.set_line_number_suffix("+");
+            // Hide default hunk controls — we render icons in the divider area instead
+            editor.set_render_diff_hunk_controls(
+                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                cx,
+            );
             editor
         });
 
@@ -181,17 +180,23 @@ impl VsFileDiffView {
             &rhs_editor,
             window,
             |this: &mut Self, _, event: &EditorEvent, window, cx| {
-                if let EditorEvent::ScrollPositionChanged { local: true, .. } = event {
-                    if !this.syncing_scroll {
-                        this.syncing_scroll = true;
-                        let pos = this.rhs_editor.update(cx, |editor, cx| {
-                            editor.scroll_position(cx)
-                        });
-                        this.lhs_editor.update(cx, |editor, cx| {
-                            editor.set_scroll_position(pos, window, cx);
-                        });
-                        this.syncing_scroll = false;
+                match event {
+                    EditorEvent::ScrollPositionChanged { local: true, .. } => {
+                        if !this.syncing_scroll {
+                            this.syncing_scroll = true;
+                            let pos = this.rhs_editor.update(cx, |editor, cx| {
+                                editor.scroll_position(cx)
+                            });
+                            this.lhs_editor.update(cx, |editor, cx| {
+                                editor.set_scroll_position(pos, window, cx);
+                            });
+                            this.syncing_scroll = false;
+                        }
                     }
+                    EditorEvent::DirtyChanged | EditorEvent::Saved => {
+                        this.refresh_alignment_blocks(cx);
+                    }
+                    _ => {}
                 }
                 cx.emit(event.clone());
             },
@@ -216,64 +221,54 @@ impl VsFileDiffView {
             },
         ));
 
-        // Setup task: wait for diff, then add spacer blocks for alignment
+        // Subscribe to unstaged diff changes to reload LHS when index text updates
+        subscriptions.push(cx.subscribe_in(
+            &unstaged_diff,
+            window,
+            |this: &mut Self, _, event: &buffer_diff::BufferDiffEvent, window, cx| {
+                if let buffer_diff::BufferDiffEvent::DiffChanged(_) = event {
+                    // Index text has been updated — reload LHS
+                    let new_index_text = this.unstaged_diff.read(cx)
+                        .base_text_buffer().read(cx).text();
+
+                    let rhs_scroll = this.rhs_editor.update(cx, |editor, cx| {
+                        editor.scroll_position(cx)
+                    });
+                    this.syncing_scroll = true;
+
+                    this.lhs_editor.update(cx, |editor, cx| {
+                        let buffer = editor.buffer().read(cx)
+                            .all_buffers().into_iter().next();
+                        if let Some(buffer) = buffer {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.set_text(new_index_text, cx);
+                            });
+                        }
+                        editor.set_scroll_position(rhs_scroll, window, cx);
+                    });
+
+                    this.syncing_scroll = false;
+                    this.refresh_alignment_blocks(cx);
+                }
+            },
+        ));
+
+        // Setup task: wait for diff to load, then add spacer blocks
         let setup_task = cx.spawn_in(window, {
             let rhs_editor = rhs_editor.clone();
-            let lhs_editor = lhs_editor.clone();
             async move |_this, cx| {
-                match diff_kind {
-                    VsDiffKind::Unstaged => {
-                        // Unstaged diff already added to multibuffer in constructor.
-                        // No need to wait.
-                    }
-                    VsDiffKind::Staged => {
-                        // For Staged view, create a diff manually (index vs HEAD)
-                        let head_text = head_text_for_staged
-                            .expect("head_text saved for staged view");
-                        let (diff, update_task) = rhs_editor.update(cx, |editor, cx| {
-                            let rhs_buffer = editor.buffer().read(cx)
-                                .all_buffers().into_iter().next()
-                                .expect("rhs buffer exists");
-                            let rhs_snapshot = rhs_buffer.read(cx).text_snapshot();
-
-                            let diff = cx.new(|cx| BufferDiff::new(&rhs_snapshot, cx));
-                            let update_task = diff.update(cx, |diff, cx| {
-                                diff.update_diff(
-                                    rhs_snapshot,
-                                    Some(head_text.into()),
-                                    Some(true),
-                                    None,
-                                    cx,
-                                )
-                            });
-                            (diff, update_task)
-                        });
-
-                        let update = update_task.await;
-                        let rhs_snapshot = rhs_editor.update(cx, |editor, cx| {
-                            let buffer = editor.buffer().read(cx)
-                                .all_buffers().into_iter().next()
-                                .expect("rhs buffer exists");
-                            buffer.read(cx).text_snapshot()
-                        });
-                        let set_snapshot_task = diff.update(cx, |diff, cx| {
-                            diff.set_snapshot(update, &rhs_snapshot, cx)
-                        });
-                        set_snapshot_task.await;
-                        rhs_editor.update(cx, |editor, cx| {
-                            editor.buffer().update(cx, |multibuffer, cx| {
-                                multibuffer.add_diff(diff, cx);
-                            });
-                        });
-                    }
+                // Wait for RHS diff to be ready (it was added synchronously,
+                // but the diff computation is async)
+                if let Some(diff_task) = rhs_editor.update(cx, |editor, _cx| {
+                    editor.wait_for_diff_to_load()
+                }) {
+                    diff_task.await;
                 }
 
                 // Compute spacer blocks from diff hunks
-                rhs_editor
-                    .update_in(cx, |_rhs, window, cx| {
-                        Self::insert_alignment_blocks(
-                            &rhs_editor, &lhs_editor, window, cx,
-                        );
+                _this
+                    .update(cx, |this, cx| {
+                        this.refresh_alignment_blocks(cx);
                     })
                     .ok();
             }
@@ -282,19 +277,58 @@ impl VsFileDiffView {
         Self {
             lhs_editor,
             rhs_editor,
+            _uncommitted_diff: uncommitted_diff,
+            unstaged_diff,
             diff_kind,
+            file_path,
             _project: project,
             focus_handle,
             syncing_scroll: false,
+            hunk_icons: Vec::new(),
+            rhs_block_ids: Vec::new(),
+            lhs_block_ids: Vec::new(),
             _subscriptions: subscriptions,
             _setup_task: setup_task,
         }
     }
 
-    fn insert_alignment_blocks(
+    fn refresh_alignment_blocks(&mut self, cx: &mut App) {
+        let rhs_editor = &self.rhs_editor;
+        let lhs_editor = &self.lhs_editor;
+
+        // Remove old blocks
+        if !self.rhs_block_ids.is_empty() {
+            let ids: collections::HashSet<_> = std::mem::take(&mut self.rhs_block_ids).into_iter().collect();
+            rhs_editor.update(cx, |editor, cx| {
+                editor.remove_blocks(ids, None, cx);
+            });
+        }
+        if !self.lhs_block_ids.is_empty() {
+            let ids: collections::HashSet<_> = std::mem::take(&mut self.lhs_block_ids).into_iter().collect();
+            lhs_editor.update(cx, |editor, cx| {
+                editor.remove_blocks(ids, None, cx);
+            });
+        }
+
+        let uncommitted_diff = &self._uncommitted_diff;
+        self.hunk_icons.clear();
+        Self::compute_alignment_blocks(
+            rhs_editor, lhs_editor, uncommitted_diff,
+            &mut self.rhs_block_ids, &mut self.lhs_block_ids,
+            &mut self.hunk_icons,
+            self.diff_kind,
+            cx,
+        );
+    }
+
+    fn compute_alignment_blocks(
         rhs_editor: &Entity<Editor>,
         lhs_editor: &Entity<Editor>,
-        _window: &mut Window,
+        uncommitted_diff: &Entity<BufferDiff>,
+        rhs_block_ids: &mut Vec<editor::display_map::CustomBlockId>,
+        lhs_block_ids: &mut Vec<editor::display_map::CustomBlockId>,
+        hunk_icons: &mut Vec<HunkIconInfo>,
+        diff_kind: VsDiffKind,
         cx: &mut App,
     ) {
         use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
@@ -302,42 +336,47 @@ impl VsFileDiffView {
         let rhs_snapshot = rhs_editor.read(cx).buffer().read(cx).snapshot(cx);
         let lhs_snapshot = lhs_editor.read(cx).buffer().read(cx).snapshot(cx);
 
-        // Get the full LHS text for line counting in base ranges
-        let lhs_full_text: String = lhs_snapshot.text().to_string();
-
         let hunks: Vec<_> = rhs_snapshot.diff_hunks().collect();
         if hunks.is_empty() {
             return;
         }
 
         let spacer_color = gpui::hsla(0.0, 0.0, 0.3, 0.1);
-        let deleted_color = gpui::hsla(0.0, 0.5, 0.4, 0.15); // red tint for LHS
-        let added_color = gpui::hsla(0.33, 0.5, 0.4, 0.15); // green tint for RHS
 
         let mut rhs_blocks = Vec::new();
         let mut lhs_blocks = Vec::new();
-        let mut lhs_highlights: Vec<(multi_buffer::Anchor, multi_buffer::Anchor)> = Vec::new();
-        let mut rhs_highlights: Vec<(multi_buffer::Anchor, multi_buffer::Anchor)> = Vec::new();
-
-        // Track how many extra lines have been inserted on each side
-        // so we can adjust anchor positions
-        let mut lhs_extra_offset: i64 = 0;
 
         for hunk in &hunks {
             let rhs_lines = (hunk.row_range.end.0 as i64) - (hunk.row_range.start.0 as i64);
 
-            // Count LHS lines from diff_base_byte_range
+            // For the LHS, deleted hunks are shown inline via set_show_deleted_hunks(true).
+            // The LHS hunk at the same position would have the deleted lines visible.
+            // We need to compute the LHS line count from the diff base byte range.
             let base_start = hunk.diff_base_byte_range.start.0;
             let base_end = hunk.diff_base_byte_range.end.0;
-            let lhs_lines = if base_end > base_start && base_end <= lhs_full_text.len() {
-                let slice = &lhs_full_text[base_start..base_end];
-                let newlines = slice.chars().filter(|&c| c == '\n').count() as i64;
-                if !slice.is_empty() && !slice.ends_with('\n') {
-                    newlines + 1
-                } else if newlines > 0 {
-                    newlines
-                } else if !slice.is_empty() {
-                    1
+            let lhs_lines = if base_end > base_start {
+                // Count lines in the base text range
+                let diff = rhs_editor.read(cx).buffer().read(cx)
+                    .all_buffers().into_iter().next()
+                    .and_then(|buffer| {
+                        rhs_editor.read(cx).buffer().read(cx)
+                            .diff_for(buffer.read(cx).remote_id())
+                    });
+                if let Some(diff) = diff {
+                    let base_text = diff.read(cx).base_text_buffer().read(cx).text();
+                    let clamped_end = base_end.min(base_text.len());
+                    let clamped_start = base_start.min(clamped_end);
+                    let slice = &base_text[clamped_start..clamped_end];
+                    let newlines = slice.chars().filter(|&c| c == '\n').count() as i64;
+                    if !slice.is_empty() && !slice.ends_with('\n') {
+                        newlines + 1
+                    } else if newlines > 0 {
+                        newlines
+                    } else if !slice.is_empty() {
+                        1
+                    } else {
+                        0
+                    }
                 } else {
                     0
                 }
@@ -346,11 +385,23 @@ impl VsFileDiffView {
             };
 
             let diff = rhs_lines - lhs_lines;
+            let hunk_height = rhs_lines.max(lhs_lines) as u32;
+
+            // Store hunk position for divider icon rendering (unstaged only)
+            if diff_kind == VsDiffKind::Unstaged {
+                hunk_icons.push(HunkIconInfo {
+                    rhs_start_row: hunk.row_range.start.0,
+                    hunk_height,
+                    rhs_editor: rhs_editor.clone(),
+                    uncommitted_diff: uncommitted_diff.clone(),
+                });
+            }
 
             if diff > 0 {
                 // RHS has more lines (additions) → insert spacer in LHS
-                let lhs_row = ((hunk.row_range.start.0 as i64 - lhs_extra_offset) + lhs_lines)
-                    .max(0) as u32;
+                // Position in LHS: the hunk start row maps to the same position
+                // but LHS shows deleted content, so we need the corresponding LHS row
+                let lhs_row = hunk.row_range.start.0;
                 let lhs_row = lhs_row.min(lhs_snapshot.max_point().row);
                 let anchor = lhs_snapshot.anchor_before(
                     multi_buffer::MultiBufferPoint::new(lhs_row.saturating_sub(1).max(0), 0),
@@ -371,13 +422,20 @@ impl VsFileDiffView {
                     priority: 0,
                 });
             } else if diff < 0 {
-                // LHS has more lines (deletions) → insert spacer in RHS
-                let rhs_row = hunk.row_range.end.0.saturating_sub(1);
+                // LHS has more lines (deletions) → insert spacer in RHS with icon buttons
+                let rhs_row = hunk.row_range.start.0;
                 let anchor = rhs_snapshot.anchor_before(
-                    multi_buffer::MultiBufferPoint::new(rhs_row, 0),
+                    multi_buffer::MultiBufferPoint::new(
+                        rhs_row.max(1).saturating_sub(1),
+                        0,
+                    ),
                 );
 
                 let height = (-diff) as u32;
+                let rhs_editor_for_block = rhs_editor.clone();
+                let uncommitted_diff_for_block = uncommitted_diff.clone();
+                let base_byte_range = hunk.diff_base_byte_range.start.0
+                    ..hunk.diff_base_byte_range.end.0;
                 rhs_blocks.push(BlockProperties {
                     placement: BlockPlacement::Below(anchor),
                     height: Some(height),
@@ -386,86 +444,27 @@ impl VsFileDiffView {
                         gpui::div()
                             .h(cx.line_height * height as f32)
                             .w_full()
-                            .bg(spacer_color)
                             .into_any_element()
                     }),
                     priority: 0,
                 });
             }
-
-            // Highlight LHS rows for this hunk (deleted/modified lines)
-            if lhs_lines > 0 {
-                let lhs_start_row = ((hunk.row_range.start.0 as i64 - lhs_extra_offset)
-                    .max(0)) as u32;
-                let lhs_end_row = (lhs_start_row as i64 + lhs_lines).max(0) as u32;
-                let lhs_end_row = lhs_end_row.min(lhs_snapshot.max_point().row + 1);
-                if lhs_start_row < lhs_end_row {
-                    let start = lhs_snapshot.anchor_before(
-                        multi_buffer::MultiBufferPoint::new(lhs_start_row, 0),
-                    );
-                    let end = lhs_snapshot.anchor_before(
-                        multi_buffer::MultiBufferPoint::new(lhs_end_row.saturating_sub(1), 0),
-                    );
-                    lhs_highlights.push((start, end));
-                }
-            }
-
-            // Highlight RHS rows for this hunk (added/modified lines)
-            if rhs_lines > 0 {
-                let start = rhs_snapshot.anchor_before(
-                    multi_buffer::MultiBufferPoint::new(hunk.row_range.start.0, 0),
-                );
-                let end = rhs_snapshot.anchor_before(
-                    multi_buffer::MultiBufferPoint::new(
-                        hunk.row_range.end.0.saturating_sub(1),
-                        0,
-                    ),
-                );
-                rhs_highlights.push((start, end));
-            }
-
-            lhs_extra_offset += diff;
         }
 
-        // Insert spacer blocks
+        // Insert spacer blocks and store IDs
         if !rhs_blocks.is_empty() {
             rhs_editor.update(cx, |editor, cx| {
-                editor.insert_blocks(rhs_blocks, None, cx);
+                rhs_block_ids.extend(editor.insert_blocks(rhs_blocks, None, cx));
             });
         }
         if !lhs_blocks.is_empty() {
             lhs_editor.update(cx, |editor, cx| {
-                editor.insert_blocks(lhs_blocks, None, cx);
-            });
-        }
-
-        // Apply row highlights
-        struct LhsDiffHighlight;
-        struct RhsDiffHighlight;
-
-        for (start, end) in lhs_highlights {
-            lhs_editor.update(cx, |editor, cx| {
-                editor.highlight_rows::<LhsDiffHighlight>(
-                    start..end,
-                    deleted_color,
-                    editor::RowHighlightOptions::default(),
-                    cx,
-                );
-            });
-        }
-        for (start, end) in rhs_highlights {
-            rhs_editor.update(cx, |editor, cx| {
-                editor.highlight_rows::<RhsDiffHighlight>(
-                    start..end,
-                    added_color,
-                    editor::RowHighlightOptions::default(),
-                    cx,
-                );
+                lhs_block_ids.extend(editor.insert_blocks(lhs_blocks, None, cx));
             });
         }
 
         log::info!(
-            "vs_file_diff_view: inserted alignment blocks and highlights for {} hunks",
+            "vs_file_diff_view: inserted alignment blocks for {} hunks",
             hunks.len()
         );
     }
@@ -474,6 +473,97 @@ impl VsFileDiffView {
 impl Render for VsFileDiffView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let border_color = cx.theme().colors().border_variant;
+
+        // Compute icon positions from RHS scroll position
+        let line_height = _window.line_height();
+        let scroll_position = self.rhs_editor.update(cx, |editor, cx| {
+            editor.scroll_position(cx)
+        });
+        let scroll_top = line_height * scroll_position.y as f32;
+
+        let mut divider_icons: Vec<AnyElement> = Vec::new();
+        for info in &self.hunk_icons {
+            let top = line_height * info.rhs_start_row as f32 - scroll_top;
+            let hunk_height_total = line_height * info.hunk_height as f32;
+
+            let rhs_editor = info.rhs_editor.clone();
+            let uncommitted_diff = info.uncommitted_diff.clone();
+            let hunk_row = info.rhs_start_row;
+
+            divider_icons.push(
+                gpui::div()
+                    .absolute()
+                    .top(top)
+                    .left_0()
+                    .w_full()
+                    .h(hunk_height_total)
+                    .child(
+                        v_flex()
+                            .items_center()
+                            .justify_center()
+                            .h_full()
+                            .gap_0p5()
+                            .child(
+                                gpui::div()
+                                    .id(("stage-mid", hunk_row as u64))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.5, 0.2)))
+                                    .rounded_sm()
+                                    .p_0p5()
+                                    .child(ui::Icon::new(ui::IconName::Plus).size(ui::IconSize::XSmall))
+                                    .on_click({
+                                        let rhs_editor = rhs_editor.clone();
+                                        let uncommitted_diff = uncommitted_diff.clone();
+                                        move |_event, _window, cx| {
+                                            let buffer = rhs_editor.read(cx).buffer().read(cx)
+                                                .all_buffers().into_iter().next();
+                                            if let Some(buffer) = buffer {
+                                                let buffer_snapshot = buffer.read(cx).snapshot();
+                                                let file_exists = buffer_snapshot.file()
+                                                    .is_some_and(|file| file.disk_state().exists());
+                                                let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
+                                                let matching_hunks: Vec<_> = uncommitted_snapshot
+                                                    .hunks(&buffer_snapshot)
+                                                    .filter(|h| {
+                                                        (h.range.start.row <= hunk_row && h.range.end.row >= hunk_row)
+                                                            || (hunk_row == 0 && h.range.start.row == 0)
+                                                    })
+                                                    .collect();
+                                                if !matching_hunks.is_empty() {
+                                                    uncommitted_diff.update(cx, |diff, cx| {
+                                                        diff.stage_or_unstage_hunks(
+                                                            true, &matching_hunks, &buffer_snapshot, file_exists, cx,
+                                                        );
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    })
+                            )
+                            .child(
+                                gpui::div()
+                                    .id(("restore-mid", hunk_row as u64))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.5, 0.2)))
+                                    .rounded_sm()
+                                    .p_0p5()
+                                    .child(ui::Icon::new(ui::IconName::ArrowRight).size(ui::IconSize::XSmall))
+                                    .on_click({
+                                        let rhs_editor = rhs_editor.clone();
+                                        move |_event, window, cx| {
+                                            rhs_editor.update(cx, |editor, cx| {
+                                                let point = rope::Point::new(hunk_row, 0);
+                                                editor.restore_hunks_in_ranges(
+                                                    vec![point..point], window, cx,
+                                                );
+                                            });
+                                        }
+                                    })
+                            )
+                    )
+                    .into_any_element(),
+            );
+        }
 
         h_flex()
             .size_full()
@@ -488,10 +578,13 @@ impl Render for VsFileDiffView {
             )
             .child(
                 div()
-                    .w(px(1.))
+                    .w(px(24.))
                     .h_full()
                     .flex_shrink_0()
-                    .bg(border_color),
+                    .bg(border_color)
+                    .relative()
+                    .overflow_hidden()
+                    .children(divider_icons),
             )
             .child(
                 div()
@@ -530,25 +623,12 @@ impl Item for VsFileDiffView {
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         let filename = self
-            .rhs_editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .all_buffers()
-            .into_iter()
-            .next()
-            .and_then(|buffer| {
-                let file = buffer.read(cx).file()?;
-                Some(
-                    file.full_path(cx)
-                        .file_name()?
-                        .to_string_lossy()
-                        .to_string(),
-                )
-            })
-            .unwrap_or_else(|| "untitled".to_string());
+            .file_path
+            .as_ref()
+            .map(|s| s.as_ref())
+            .unwrap_or("untitled");
         let suffix = match self.diff_kind {
             VsDiffKind::Staged => "(Index)",
             VsDiffKind::Unstaged => "(Working Tree)",
@@ -556,18 +636,8 @@ impl Item for VsFileDiffView {
         format!("{filename} {suffix}").into()
     }
 
-    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        self.rhs_editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .all_buffers()
-            .into_iter()
-            .next()
-            .and_then(|buffer| {
-                let file = buffer.read(cx).file()?;
-                Some(file.full_path(cx).to_string_lossy().to_string().into())
-            })
+    fn tab_tooltip_text(&self, _cx: &App) -> Option<SharedString> {
+        self.file_path.clone()
     }
 
     fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
@@ -699,4 +769,85 @@ impl Item for VsFileDiffView {
             editor.added_to_workspace(workspace, window, cx);
         });
     }
+}
+
+fn render_unstaged_hunk_controls(
+    row: u32,
+    _status: &buffer_diff::DiffHunkStatus,
+    hunk_range: Range<Anchor>,
+    is_created_file: bool,
+    line_height: gpui::Pixels,
+    editor: &Entity<Editor>,
+    uncommitted_diff: &Entity<BufferDiff>,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    h_flex()
+        .h(line_height)
+        .items_center()
+        .justify_center()
+        .gap_0p5()
+        .child(
+            gpui::div()
+                .id(("stage", row as u64))
+                .cursor_pointer()
+                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.5, 0.2)))
+                .rounded_sm()
+                .p_0p5()
+                .child(ui::Icon::new(ui::IconName::Plus).size(ui::IconSize::XSmall))
+                .on_click({
+                    let editor = editor.clone();
+                    let uncommitted_diff = uncommitted_diff.clone();
+                    let hunk_range = hunk_range.clone();
+                    move |_event, _window, cx| {
+                        let buffer = editor.read(cx).buffer().read(cx)
+                            .all_buffers().into_iter().next();
+                        if let Some(buffer) = buffer {
+                            let buffer_snapshot = buffer.read(cx).snapshot();
+                            let file_exists = buffer_snapshot
+                                .file()
+                                .is_some_and(|file| file.disk_state().exists());
+                            let multibuffer_snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                            let hunk_point = hunk_range.start.to_point(&multibuffer_snapshot);
+                            let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
+                            let matching_hunks: Vec<_> = uncommitted_snapshot
+                                .hunks(&buffer_snapshot)
+                                .filter(|h| {
+                                    h.range.start.row <= hunk_point.row
+                                        && h.range.end.row >= hunk_point.row
+                                })
+                                .collect();
+                            if !matching_hunks.is_empty() {
+                                uncommitted_diff.update(cx, |diff, cx| {
+                                    diff.stage_or_unstage_hunks(
+                                        true, &matching_hunks, &buffer_snapshot, file_exists, cx,
+                                    );
+                                });
+                            }
+                        }
+                    }
+                })
+        )
+        .when(!is_created_file, |el| {
+            el.child(
+                gpui::div()
+                    .id(("restore", row as u64))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.5, 0.2)))
+                    .rounded_sm()
+                    .p_0p5()
+                    .child(ui::Icon::new(ui::IconName::ArrowRight).size(ui::IconSize::XSmall))
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                let snapshot = editor.snapshot(window, cx);
+                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot());
+                                editor.restore_hunks_in_ranges(vec![point..point], window, cx);
+                            });
+                        }
+                    })
+            )
+        })
+        .into_any_element()
 }

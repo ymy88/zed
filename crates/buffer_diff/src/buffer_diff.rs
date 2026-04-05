@@ -25,12 +25,14 @@ pub struct BufferDiff {
     pub buffer_id: BufferId,
     inner: BufferDiffInner<Entity<language::Buffer>>,
     secondary_diff: Option<Entity<BufferDiff>>,
+    all_hunks_unstaged: bool,
 }
 
 #[derive(Clone)]
 pub struct BufferDiffSnapshot {
     inner: BufferDiffInner<language::BufferSnapshot>,
     secondary_diff: Option<Arc<BufferDiffSnapshot>>,
+    all_hunks_unstaged: bool,
 }
 
 impl std::fmt::Debug for BufferDiffSnapshot {
@@ -286,8 +288,15 @@ impl BufferDiffSnapshot {
         buffer: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         let unstaged_counterpart = self.secondary_diff.as_ref().map(|diff| &diff.inner);
+        let all_hunks_unstaged = self.all_hunks_unstaged;
         self.inner
             .hunks_intersecting_range(range, buffer, unstaged_counterpart)
+            .map(move |mut hunk| {
+                if all_hunks_unstaged && unstaged_counterpart.is_none() {
+                    hunk.secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
+                }
+                hunk
+            })
     }
 
     pub fn hunks_intersecting_range_rev<'a>(
@@ -309,6 +318,7 @@ impl BufferDiffSnapshot {
         main_buffer: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         let unstaged_counterpart = self.secondary_diff.as_ref().map(|diff| &diff.inner);
+        let all_hunks_unstaged = self.all_hunks_unstaged;
         let filter = move |summary: &DiffHunkSummary| {
             let before_start = summary.diff_base_byte_range.end < range.start;
             let after_end = summary.diff_base_byte_range.start > range.end;
@@ -316,6 +326,12 @@ impl BufferDiffSnapshot {
         };
         self.inner
             .hunks_intersecting_range_impl(filter, main_buffer, unstaged_counterpart)
+            .map(move |mut hunk| {
+                if all_hunks_unstaged && unstaged_counterpart.is_none() {
+                    hunk.secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
+                }
+                hunk
+            })
     }
 
     pub fn hunks_intersecting_base_text_range_rev<'a>(
@@ -1540,6 +1556,7 @@ impl BufferDiff {
                 buffer_snapshot: buffer.clone(),
             },
             secondary_diff: None,
+            all_hunks_unstaged: false,
         }
     }
 
@@ -1561,6 +1578,7 @@ impl BufferDiff {
                 buffer_snapshot: buffer.clone(),
             },
             secondary_diff: None,
+            all_hunks_unstaged: false,
         }
     }
 
@@ -1586,6 +1604,10 @@ impl BufferDiff {
 
     pub fn set_secondary_diff(&mut self, diff: Entity<BufferDiff>) {
         self.secondary_diff = Some(diff);
+    }
+
+    pub fn set_all_hunks_unstaged(&mut self, value: bool) {
+        self.all_hunks_unstaged = value;
     }
 
     pub fn secondary_diff(&self) -> Option<Entity<BufferDiff>> {
@@ -1968,6 +1990,7 @@ impl BufferDiff {
                 debug_assert!(diff.read(cx).secondary_diff.is_none());
                 Arc::new(diff.read(cx).snapshot(cx))
             }),
+            all_hunks_unstaged: self.all_hunks_unstaged,
         }
     }
 

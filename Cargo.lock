@@ -19131,6 +19131,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "buffer_diff",
+ "collections",
  "editor",
  "file_icons",
  "git",
@@ -19142,6 +19143,7 @@ dependencies = [
  "multi_buffer",
  "panel",
  "project",
+ "rope",
  "settings",
  "theme",
  "ui",

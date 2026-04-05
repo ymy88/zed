@@ -22,7 +22,9 @@ impl VsDiffToolbar {
 
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(diff_view) = self.diff_view(cx) {
-            diff_view.focus_handle(cx).focus(window, cx);
+            // Focus the RHS editor so actions like GoToHunk reach it
+            let rhs_focus = diff_view.read(cx).rhs_editor.focus_handle(cx);
+            rhs_focus.focus(window, cx);
         }
         let action = action.boxed_clone();
         cx.defer(move |cx| {

@@ -7554,11 +7554,13 @@ fn status_to_proto(status: FileStatus) -> proto::GitFileStatus {
 }
 
 fn unmerged_status_to_proto(code: UnmergedStatusCode) -> i32 {
+
     match code {
         UnmergedStatusCode::Added => proto::GitStatus::Added as _,
         UnmergedStatusCode::Deleted => proto::GitStatus::Deleted as _,
         UnmergedStatusCode::Updated => proto::GitStatus::Updated as _,
     }
+
 }
 
 fn tracked_status_to_proto(code: StatusCode) -> i32 {
