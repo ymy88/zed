@@ -877,7 +877,11 @@ impl VsGitPanel {
                 let click_path = repo_path.clone();
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
-                    this.open_file_diff(click_path.clone(), status, group, window, cx);
+                    if group == ChangeGroup::MergeConflicts {
+                        this.open_file(click_path.clone(), window, cx);
+                    } else {
+                        this.open_file_diff(click_path.clone(), status, group, window, cx);
+                    }
                     cx.notify();
                 })
             })
@@ -961,7 +965,20 @@ impl VsGitPanel {
                         )),
                     );
             }
-            ChangeGroup::MergeConflicts => {}
+            ChangeGroup::MergeConflicts => {
+                let stage_path = repo_path.clone();
+                row = row.child(
+                    IconButton::new(
+                        ElementId::NamedInteger("stage-conflict".into(), ix_u64),
+                        IconName::Plus,
+                    )
+                    .icon_size(IconSize::XSmall)
+                    .tooltip(Tooltip::text("Stage (Mark as Resolved)"))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.stage_file(stage_path.clone(), cx);
+                    })),
+                );
+            }
         }
 
         row
