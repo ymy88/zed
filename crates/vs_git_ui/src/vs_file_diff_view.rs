@@ -562,7 +562,7 @@ impl VsFileDiffView {
             });
         }
 
-        log::info!(
+        log::debug!(
             "vs_file_diff_view: inserted alignment blocks for {} hunks",
             hunks.len()
         );

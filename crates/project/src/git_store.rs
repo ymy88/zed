@@ -1752,7 +1752,6 @@ impl GitStore {
                 });
                 if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
                     let recv = repo.update(cx, |repo, cx| {
-                        log::debug!("hunks changed for {}", path.as_unix_str());
                         repo.spawn_set_index_text_job(
                             path,
                             new_index_text.as_ref().map(|rope| rope.to_string()),
@@ -1761,6 +1760,7 @@ impl GitStore {
                         )
                     });
                     let diff = diff.downgrade();
+                    let new_index_for_recalc = new_index_text.as_ref().map(|rope| rope.to_string());
                     cx.spawn(async move |this, cx| {
                         if let Ok(Err(error)) = cx.background_spawn(recv).await {
                             diff.update(cx, |diff, cx| {
@@ -1769,6 +1769,25 @@ impl GitStore {
                             .ok();
                             this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
                                 .ok();
+                        } else {
+                            // Proactively recalculate diffs after index write
+                            // instead of waiting for the file watcher (~460ms delay)
+                            this.update(cx, |this, cx| {
+                                if let Some(diff_state) = this.diffs.get(&buffer_id) {
+                                    let buffer = this.buffer_store.read(cx)
+                                        .get_possibly_incomplete(buffer_id);
+                                    if let Some(buffer) = buffer {
+                                        let buffer_snapshot = buffer.read(cx).text_snapshot();
+                                        diff_state.update(cx, |diff_state, cx| {
+                                            diff_state.diff_bases_changed(
+                                                buffer_snapshot.clone(),
+                                                Some(DiffBasesChange::SetIndex(new_index_for_recalc.clone())),
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }
+                            }).ok();
                         }
                     })
                     .detach();
