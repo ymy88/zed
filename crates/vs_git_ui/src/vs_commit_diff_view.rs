@@ -144,7 +144,7 @@ impl VsCommitDiffView {
                 set_task.await;
                 rhs_editor.update(cx, |editor, cx| {
                     editor.buffer().update(cx, |multibuffer, cx| {
-                        multibuffer.add_diff(diff.clone(), cx);
+                        multibuffer.add_diff(diff, cx);
                     });
                     editor.set_expand_all_diff_hunks(cx);
                 });
@@ -152,7 +152,7 @@ impl VsCommitDiffView {
                 // Compute and insert alignment spacer blocks
                 _this
                     .update_in(cx, |_this, _window, cx| {
-                        insert_alignment_blocks(&rhs_editor, &lhs_editor, &diff, cx);
+                        insert_alignment_blocks(&rhs_editor, &lhs_editor, cx);
 
                         // Scroll to first hunk
                         let rhs_snapshot = rhs_editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -191,7 +191,6 @@ impl VsCommitDiffView {
 fn insert_alignment_blocks(
     rhs_editor: &Entity<Editor>,
     lhs_editor: &Entity<Editor>,
-    diff: &Entity<BufferDiff>,
     cx: &mut App,
 ) {
     use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};

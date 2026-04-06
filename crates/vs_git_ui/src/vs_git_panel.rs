@@ -69,7 +69,7 @@ enum VsGitListEntry {
         staging: StageStatus,
         group: ChangeGroup,
     },
-    HistoryHeader { count: usize },
+    HistoryHeader,
     CommitEntry {
         sha: SharedString,
         subject: SharedString,
@@ -412,9 +412,7 @@ impl VsGitPanel {
 
         // Build history entries separately
         if !self.commit_entries.is_empty() {
-            self.history_entries.push(VsGitListEntry::HistoryHeader {
-                count: self.commit_entries.len(),
-            });
+            self.history_entries.push(VsGitListEntry::HistoryHeader);
             if !self.history_collapsed {
                 for commit in &self.commit_entries {
                     let expanded = self.expanded_commits.contains(&commit.sha);
@@ -1014,62 +1012,6 @@ impl VsGitPanel {
         }
     }
 
-    fn render_history(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let entry_count = self.history_entries.len();
-
-        uniform_list(
-            "vs-git-history",
-            entry_count,
-            cx.processor(
-                move |this: &mut Self, range: std::ops::Range<usize>, window, cx| {
-                    range
-                        .map(|ix| {
-                            let entry = &this.history_entries[ix];
-                            match entry {
-                                VsGitListEntry::HistoryHeader { count } => this
-                                    .render_history_header(*count, cx)
-                                    .into_any_element(),
-                                VsGitListEntry::CommitEntry {
-                                    sha,
-                                    subject,
-                                    author,
-                                    timestamp,
-                                    expanded,
-                                } => this
-                                    .render_commit_entry(
-                                        ix,
-                                        sha.clone(),
-                                        subject.clone(),
-                                        author.clone(),
-                                        *timestamp,
-                                        *expanded,
-                                        cx,
-                                    )
-                                    .into_any_element(),
-                                VsGitListEntry::CommitFileEntry { sha, path, status } => this
-                                    .render_commit_file_entry(
-                                        ix,
-                                        sha.clone(),
-                                        path.clone(),
-                                        *status,
-                                        cx,
-                                    )
-                                    .into_any_element(),
-                                VsGitListEntry::LoadMoreButton => this
-                                    .render_load_more(cx)
-                                    .into_any_element(),
-                                _ => gpui::Empty.into_any_element(),
-                            }
-                        })
-                        .collect()
-                },
-            ),
-        )
-        .flex_grow()
-        .with_sizing_behavior(ListSizingBehavior::Infer)
-        .track_scroll(&self.history_scroll_handle)
-    }
-
     fn render_compared_section(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let base_branch = self.base_branch.clone().unwrap_or("?".into());
         let file_count = self.compared_files.len();
@@ -1359,48 +1301,6 @@ impl VsGitPanel {
         .track_scroll(&self.history_scroll_handle)
     }
 
-    fn render_history_header(&self, count: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        let collapsed = self.history_collapsed;
-        h_flex()
-            .id("history-header")
-            .w_full()
-            .px_2()
-            .py_0p5()
-            .gap_1()
-            .bg(cx.theme().colors().surface_background)
-            .cursor_pointer()
-            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.history_collapsed = !this.history_collapsed;
-                this.rebuild_entries(cx);
-            }))
-            .child(
-                Icon::new(if collapsed {
-                    IconName::ChevronRight
-                } else {
-                    IconName::ChevronDown
-                })
-                .size(IconSize::XSmall)
-                .color(Color::Muted),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .flex_grow()
-                    .child(
-                        Label::new("Commit History")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .weight(gpui::FontWeight::BOLD),
-                    )
-                    .child(
-                        Label::new(format!("({})", count))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            )
-    }
-
     fn render_commit_entry(
         &self,
         ix: usize,
@@ -1616,7 +1516,6 @@ impl Render for VsGitPanel {
         let has_history = !self.history_entries.is_empty();
         let has_compared = !self.compared_files.is_empty();
         let has_bottom_section = has_history || has_compared;
-        let border_color = cx.theme().colors().border_variant;
 
         v_flex()
             .id("vs_git_panel")
