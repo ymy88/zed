@@ -75,17 +75,7 @@ impl Render for VsDiffToolbar {
                     .tooltip(Tooltip::text("Open File"))
                     .on_click(move |_, window, cx| {
                         if let Some(diff_view) = diff_view_for_open.upgrade() {
-                            // Read the RHS editor's buffer file info first
-                            let project_path = diff_view.read(cx).rhs_editor.read(cx)
-                                .buffer().read(cx)
-                                .all_buffers().into_iter().next()
-                                .and_then(|buffer| {
-                                    let file = buffer.read(cx).file()?;
-                                    Some(project::ProjectPath {
-                                        worktree_id: file.worktree_id(cx),
-                                        path: file.path().clone(),
-                                    })
-                                });
+                            let project_path = diff_view.read(cx).project_path.clone();
                             // Get current scroll position to restore after opening
                             let scroll_row = diff_view.update(cx, |dv, cx| {
                                 dv.rhs_editor.update(cx, |editor, cx| {

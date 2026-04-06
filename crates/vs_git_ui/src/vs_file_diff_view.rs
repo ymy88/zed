@@ -44,6 +44,7 @@ pub struct VsFileDiffView {
     unstaged_diff: Entity<BufferDiff>,
     diff_kind: VsDiffKind,
     file_path: Option<SharedString>,
+    pub(crate) project_path: Option<ProjectPath>,
     _project: Entity<Project>,
     focus_handle: FocusHandle,
     syncing_scroll: bool,
@@ -89,8 +90,11 @@ impl VsFileDiffView {
                 diff.set_all_hunks_unstaged(true);
             });
 
-            // Read the index text (base of unstaged diff) for the LHS buffer
+            // Read base texts
             let index_text = unstaged_diff.read_with(cx, |diff, cx| {
+                diff.base_text_buffer().read(cx).text()
+            });
+            let head_text = uncommitted_diff.read_with(cx, |diff, cx| {
                 diff.base_text_buffer().read(cx).text()
             });
 
@@ -98,6 +102,7 @@ impl VsFileDiffView {
                 cx.new(|cx| {
                     Self::new(
                         buffer,
+                        head_text,
                         index_text,
                         unstaged_diff,
                         uncommitted_diff,
@@ -114,6 +119,7 @@ impl VsFileDiffView {
 
     fn new(
         working_copy_buffer: Entity<language::Buffer>,
+        head_text: String,
         index_text: String,
         unstaged_diff: Entity<BufferDiff>,
         uncommitted_diff: Entity<BufferDiff>,
@@ -125,24 +131,38 @@ impl VsFileDiffView {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        // Get file path from working copy buffer for tab title
-        let file_path: Option<SharedString> = working_copy_buffer
+        // Get file path from working copy buffer for tab title and open file
+        let (file_path, project_path) = working_copy_buffer
             .read(cx)
             .file()
-            .and_then(|file| {
-                Some(file.full_path(cx).file_name()?.to_string_lossy().to_string().into())
-            });
+            .map(|file| {
+                let name: SharedString = file.full_path(cx)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "untitled".to_string())
+                    .into();
+                let pp = ProjectPath {
+                    worktree_id: file.worktree_id(cx),
+                    path: file.path().clone(),
+                };
+                (Some(name), Some(pp))
+            })
+            .unwrap_or((None, None));
 
-        // LHS: separate read-only buffer with index text (old content)
+        // LHS: read-only buffer with old content
+        let head_text_for_staged = head_text.clone();
+        let lhs_text = match diff_kind {
+            VsDiffKind::Unstaged => index_text.clone(),
+            VsDiffKind::Staged => head_text,
+        };
         let lhs_buffer = cx.new(|cx| {
-            let mut buffer = language::Buffer::local(index_text, cx);
+            let mut buffer = language::Buffer::local(&lhs_text, cx);
             buffer.set_capability(language::Capability::ReadOnly, cx);
             buffer
         });
         let lhs_multibuffer = cx.new(|cx| {
             MultiBuffer::singleton(lhs_buffer, cx)
         });
-
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer, None, window, cx);
@@ -153,11 +173,21 @@ impl VsFileDiffView {
             editor
         });
 
-        // RHS: working copy buffer with unstaged diff
+        // RHS: working copy (Unstaged) or index content (Staged)
+        let rhs_buffer = match diff_kind {
+            VsDiffKind::Unstaged => working_copy_buffer,
+            VsDiffKind::Staged => cx.new(|cx| {
+                let mut buffer = language::Buffer::local(&index_text, cx);
+                buffer.set_capability(language::Capability::ReadOnly, cx);
+                buffer
+            }),
+        };
         let rhs_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::singleton(working_copy_buffer, cx);
+            let mut multibuffer = MultiBuffer::singleton(rhs_buffer, cx);
             multibuffer.set_show_deleted_hunks(false, cx);
-            multibuffer.add_diff(unstaged_diff.clone(), cx);
+            if diff_kind == VsDiffKind::Unstaged {
+                multibuffer.add_diff(unstaged_diff.clone(), cx);
+            }
             multibuffer
         });
         let rhs_editor = cx.new(|cx| {
@@ -225,6 +255,8 @@ impl VsFileDiffView {
         ));
 
         // Subscribe to unstaged diff changes to reload LHS when index text updates
+        // (only for Unstaged view — Staged view's LHS shows HEAD which doesn't change)
+        if diff_kind == VsDiffKind::Unstaged {
         subscriptions.push(cx.subscribe_in(
             &unstaged_diff,
             window,
@@ -255,17 +287,51 @@ impl VsFileDiffView {
                 }
             },
         ));
+        } // end if Unstaged
 
-        // Setup task: wait for diff to load, then add spacer blocks
+        // Setup task: create diff if needed, then add spacer blocks
         let setup_task = cx.spawn_in(window, {
             let rhs_editor = rhs_editor.clone();
+            let head_text = head_text_for_staged;
             async move |_this, cx| {
-                // Wait for RHS diff to be ready (it was added synchronously,
-                // but the diff computation is async)
-                if let Some(diff_task) = rhs_editor.update(cx, |editor, _cx| {
-                    editor.wait_for_diff_to_load()
-                }) {
-                    diff_task.await;
+                match diff_kind {
+                    VsDiffKind::Unstaged => {
+                        // Wait for RHS diff to be ready
+                        if let Some(diff_task) = rhs_editor.update(cx, |editor, _cx| {
+                            editor.wait_for_diff_to_load()
+                        }) {
+                            diff_task.await;
+                        }
+                    }
+                    VsDiffKind::Staged => {
+                        // Create diff (index vs HEAD) asynchronously
+                        let rhs_buffer = rhs_editor.update(cx, |editor, cx| {
+                            editor.buffer().read(cx).all_buffers().into_iter().next()
+                                .expect("rhs buffer exists")
+                        });
+                        let rhs_snapshot = rhs_buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+                        let diff = cx.new(|cx| BufferDiff::new(&rhs_snapshot, cx));
+                        let update_task = diff.update(cx, |diff, cx| {
+                            diff.update_diff(
+                                rhs_snapshot.clone(),
+                                Some(head_text.as_str().into()),
+                                Some(true),
+                                None,
+                                cx,
+                            )
+                        });
+                        let update = update_task.await;
+                        let set_task = diff.update(cx, |diff, cx| {
+                            diff.set_snapshot(update, &rhs_snapshot, cx)
+                        });
+                        set_task.await;
+                        rhs_editor.update(cx, |editor, cx| {
+                            editor.buffer().update(cx, |multibuffer, cx| {
+                                multibuffer.add_diff(diff, cx);
+                            });
+                            editor.set_expand_all_diff_hunks(cx);
+                        });
+                    }
                 }
 
                 // Compute spacer blocks and scroll to first hunk
@@ -301,6 +367,7 @@ impl VsFileDiffView {
             unstaged_diff,
             diff_kind,
             file_path,
+            project_path,
             _project: project,
             focus_handle,
             syncing_scroll: false,
@@ -366,6 +433,7 @@ impl VsFileDiffView {
 
         let mut rhs_blocks = Vec::new();
         let mut lhs_blocks = Vec::new();
+        let mut lhs_extra_offset: i64 = 0;
 
         for hunk in &hunks {
             let rhs_lines = (hunk.row_range.end.0 as i64) - (hunk.row_range.start.0 as i64);
@@ -420,9 +488,9 @@ impl VsFileDiffView {
 
             if diff > 0 {
                 // RHS has more lines (additions) → insert spacer in LHS
-                // Position in LHS: the hunk start row maps to the same position
-                // but LHS shows deleted content, so we need the corresponding LHS row
-                let lhs_row = hunk.row_range.start.0;
+                // Convert RHS row to LHS row using cumulative offset
+                let lhs_row = ((hunk.row_range.start.0 as i64 - lhs_extra_offset) + lhs_lines)
+                    .max(0) as u32;
                 let lhs_row = lhs_row.min(lhs_snapshot.max_point().row);
                 let anchor = lhs_snapshot.anchor_before(
                     multi_buffer::MultiBufferPoint::new(lhs_row.saturating_sub(1).max(0), 0),
@@ -466,6 +534,8 @@ impl VsFileDiffView {
                     priority: 0,
                 });
             }
+
+            lhs_extra_offset += diff;
         }
 
         // Insert spacer blocks and store IDs
@@ -759,7 +829,19 @@ impl Item for VsFileDiffView {
     }
 
     fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
-        self.rhs_editor.read(cx).breadcrumbs(cx)
+        // For Unstaged view, RHS has a real file so breadcrumbs work
+        if self.diff_kind == VsDiffKind::Unstaged {
+            return self.rhs_editor.read(cx).breadcrumbs(cx);
+        }
+        // For Staged view, use the stored file path
+        let path = self.project_path.as_ref()?;
+        Some((
+            vec![HighlightedText {
+                text: path.path.as_unix_str().to_string().into(),
+                highlights: Vec::new(),
+            }],
+            None,
+        ))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
