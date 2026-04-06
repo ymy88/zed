@@ -1233,6 +1233,17 @@ impl GitStore {
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
+    pub fn branch_log(
+        &self,
+        repo: &Entity<Repository>,
+        skip: usize,
+        limit: usize,
+        cx: &mut App,
+    ) -> Task<Result<Vec<git::repository::FileHistoryEntry>>> {
+        let rx = repo.update(cx, |repo, _| repo.branch_log(skip, limit));
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
     pub fn get_permalink_to_line(
         &self,
         buffer: &Entity<Buffer>,
@@ -4692,6 +4703,23 @@ impl Repository {
                             .collect(),
                         path: RepoPath::from_proto(&response.path)?,
                     })
+                }
+            }
+        })
+    }
+
+    pub fn branch_log(
+        &mut self,
+        skip: usize,
+        limit: usize,
+    ) -> oneshot::Receiver<Result<Vec<git::repository::FileHistoryEntry>>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.branch_log(skip, limit).await
+                }
+                RepositoryState::Remote(_) => {
+                    Ok(Vec::new())
                 }
             }
         })

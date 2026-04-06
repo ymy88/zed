@@ -1,3 +1,4 @@
+mod vs_commit_diff_view;
 mod vs_diff_toolbar;
 mod vs_file_diff_view;
 mod vs_git_panel;

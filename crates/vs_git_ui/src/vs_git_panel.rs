@@ -1,5 +1,6 @@
+use collections::HashSet;
 use git::{
-    repository::RepoPath,
+    repository::{CommitFile, CommitFileStatus, FileHistoryEntry, RepoPath},
     status::{FileStatus, StageStatus},
 };
 use gpui::{
@@ -20,8 +21,12 @@ use workspace::{
 
 use crate::vs_git_panel_settings::VsGitPanelSettings;
 
+#[derive(Debug, Clone)]
+struct DraggedHistoryHandle;
+
 const VS_GIT_PANEL_KEY: &str = "VsGitPanel";
 const UPDATE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(50);
+const HISTORY_PAGE_SIZE: usize = 5;
 
 actions!(vs_git_panel, [Close, Toggle, ToggleFocus, SelectNext, SelectPrevious,]);
 
@@ -64,20 +69,44 @@ enum VsGitListEntry {
         staging: StageStatus,
         group: ChangeGroup,
     },
+    HistoryHeader { count: usize },
+    CommitEntry {
+        sha: SharedString,
+        subject: SharedString,
+        author: SharedString,
+        timestamp: i64,
+        expanded: bool,
+    },
+    CommitFileEntry {
+        sha: SharedString,
+        path: RepoPath,
+        status: CommitFileStatus,
+    },
+    LoadMoreButton,
 }
 
 pub struct VsGitPanel {
     active_repository: Option<Entity<Repository>>,
-    entries: Vec<VsGitListEntry>,
+    status_entries: Vec<VsGitListEntry>,
+    history_entries: Vec<VsGitListEntry>,
     focus_handle: FocusHandle,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
-    scroll_handle: UniformListScrollHandle,
+    status_scroll_handle: UniformListScrollHandle,
+    history_scroll_handle: UniformListScrollHandle,
     selected_entry: Option<usize>,
     staged_count: usize,
     unstaged_count: usize,
     conflict_count: usize,
     update_visible_entries_task: Task<()>,
+    commit_entries: Vec<FileHistoryEntry>,
+    expanded_commits: HashSet<SharedString>,
+    commit_files: std::collections::HashMap<SharedString, Vec<CommitFile>>,
+    history_loaded: bool,
+    history_collapsed: bool,
+    history_height: f32,
+    has_more_commits: bool,
+    load_history_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -114,16 +143,26 @@ impl VsGitPanel {
 
             let mut this = Self {
                 active_repository,
-                entries: Vec::new(),
+                status_entries: Vec::new(),
+                history_entries: Vec::new(),
                 focus_handle,
                 project,
                 workspace: workspace.weak_handle(),
-                scroll_handle: UniformListScrollHandle::new(),
+                status_scroll_handle: UniformListScrollHandle::new(),
+                history_scroll_handle: UniformListScrollHandle::new(),
                 selected_entry: None,
                 staged_count: 0,
                 unstaged_count: 0,
                 conflict_count: 0,
                 update_visible_entries_task: Task::ready(()),
+                commit_entries: Vec::new(),
+                expanded_commits: HashSet::default(),
+                commit_files: std::collections::HashMap::new(),
+                history_loaded: false,
+                history_collapsed: false,
+                history_height: 0.4,
+                has_more_commits: true,
+                load_history_task: Task::ready(()),
                 _subscriptions: vec![subscription],
             };
 
@@ -142,10 +181,84 @@ impl VsGitPanel {
             })
             .ok();
         });
+
+        if !self.history_loaded {
+            self.load_history(0, window, cx);
+        }
+    }
+
+    fn load_history(&mut self, skip: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        let git_store = self.project.read(cx).git_store().clone();
+        let log_task = git_store.update(cx, |gs, cx| gs.branch_log(&repo, skip, HISTORY_PAGE_SIZE, cx));
+
+        self.load_history_task = cx.spawn_in(window, async move |this, cx| {
+            let entries = log_task.await;
+            this.update(cx, |this, cx| {
+                match entries {
+                    Ok(entries) => {
+                        this.has_more_commits = entries.len() >= HISTORY_PAGE_SIZE;
+                        if skip == 0 {
+                            this.commit_entries = entries;
+                        } else {
+                            this.commit_entries.extend(entries);
+                        }
+                        this.history_loaded = true;
+                        this.rebuild_entries(cx);
+                    }
+                    Err(error) => {
+                        log::error!("Failed to load branch log: {error}");
+                    }
+                }
+            })
+            .ok();
+        });
+    }
+
+    fn rebuild_entries(&mut self, cx: &mut Context<Self>) {
+        self.update_visible_entries(cx);
+    }
+
+    fn toggle_commit(&mut self, sha: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        if self.expanded_commits.contains(&sha) {
+            self.expanded_commits.remove(&sha);
+            self.rebuild_entries(cx);
+        } else {
+            self.expanded_commits.insert(sha.clone());
+            if self.commit_files.contains_key(&sha) {
+                self.rebuild_entries(cx);
+            } else {
+                self.load_commit_files(sha, window, cx);
+            }
+        }
+    }
+
+    fn load_commit_files(&mut self, sha: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        let commit_sha = sha.to_string();
+        let rx = repo.update(cx, |repo, _cx| {
+            repo.load_commit_diff(commit_sha)
+        });
+
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(Ok(commit_diff)) = rx.await {
+                this.update(cx, |this, cx| {
+                    this.commit_files.insert(sha.clone(), commit_diff.files);
+                    this.rebuild_entries(cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
-        self.entries.clear();
+        self.status_entries.clear();
+        self.history_entries.clear();
         self.staged_count = 0;
         self.unstaged_count = 0;
         self.conflict_count = 0;
@@ -177,12 +290,12 @@ impl VsGitPanel {
 
         if !conflicts.is_empty() {
             self.conflict_count = conflicts.len();
-            self.entries.push(VsGitListEntry::GroupHeader {
+            self.status_entries.push(VsGitListEntry::GroupHeader {
                 group: ChangeGroup::MergeConflicts,
                 count: conflicts.len(),
             });
             for entry in conflicts {
-                self.entries.push(VsGitListEntry::FileEntry {
+                self.status_entries.push(VsGitListEntry::FileEntry {
                     repo_path: entry.repo_path,
                     status: entry.status,
                     staging: entry.status.staging(),
@@ -193,12 +306,12 @@ impl VsGitPanel {
 
         if !staged.is_empty() {
             self.staged_count = staged.len();
-            self.entries.push(VsGitListEntry::GroupHeader {
+            self.status_entries.push(VsGitListEntry::GroupHeader {
                 group: ChangeGroup::StagedChanges,
                 count: staged.len(),
             });
             for entry in staged {
-                self.entries.push(VsGitListEntry::FileEntry {
+                self.status_entries.push(VsGitListEntry::FileEntry {
                     repo_path: entry.repo_path,
                     status: entry.status,
                     staging: StageStatus::Staged,
@@ -209,17 +322,50 @@ impl VsGitPanel {
 
         if !unstaged.is_empty() {
             self.unstaged_count = unstaged.len();
-            self.entries.push(VsGitListEntry::GroupHeader {
+            self.status_entries.push(VsGitListEntry::GroupHeader {
                 group: ChangeGroup::Changes,
                 count: unstaged.len(),
             });
             for entry in unstaged {
-                self.entries.push(VsGitListEntry::FileEntry {
+                self.status_entries.push(VsGitListEntry::FileEntry {
                     repo_path: entry.repo_path,
                     status: entry.status,
                     staging: StageStatus::Unstaged,
                     group: ChangeGroup::Changes,
                 });
+            }
+        }
+
+        // Build history entries separately
+        if !self.commit_entries.is_empty() {
+            self.history_entries.push(VsGitListEntry::HistoryHeader {
+                count: self.commit_entries.len(),
+            });
+            if !self.history_collapsed {
+                for commit in &self.commit_entries {
+                    let expanded = self.expanded_commits.contains(&commit.sha);
+                    self.history_entries.push(VsGitListEntry::CommitEntry {
+                        sha: commit.sha.clone(),
+                        subject: commit.subject.clone(),
+                        author: commit.author_name.clone(),
+                        timestamp: commit.commit_timestamp,
+                        expanded,
+                    });
+                    if expanded {
+                        if let Some(files) = self.commit_files.get(&commit.sha) {
+                            for file in files {
+                                self.history_entries.push(VsGitListEntry::CommitFileEntry {
+                                    sha: commit.sha.clone(),
+                                    path: file.path.clone(),
+                                    status: file.status(),
+                                });
+                            }
+                        }
+                    }
+                }
+                if self.has_more_commits {
+                    self.history_entries.push(VsGitListEntry::LoadMoreButton);
+                }
             }
         }
 
@@ -339,7 +485,7 @@ impl VsGitPanel {
 
     fn stage_group(&mut self, group: ChangeGroup, cx: &mut Context<Self>) {
         let paths: Vec<RepoPath> = self
-            .entries
+            .status_entries
             .iter()
             .filter_map(|entry| match entry {
                 VsGitListEntry::FileEntry {
@@ -366,7 +512,7 @@ impl VsGitPanel {
 
     fn unstage_group(&mut self, group: ChangeGroup, cx: &mut Context<Self>) {
         let paths: Vec<RepoPath> = self
-            .entries
+            .status_entries
             .iter()
             .filter_map(|entry| match entry {
                 VsGitListEntry::FileEntry {
@@ -392,20 +538,20 @@ impl VsGitPanel {
     }
 
     fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.entries.is_empty() {
+        if self.status_entries.is_empty() {
             return;
         }
         let next = match self.selected_entry {
-            Some(ix) => (ix + 1).min(self.entries.len() - 1),
+            Some(ix) => (ix + 1).min(self.status_entries.len() - 1),
             None => 0,
         };
         self.selected_entry = Some(next);
-        self.scroll_handle.scroll_to_item(next, gpui::ScrollStrategy::Top);
+        self.status_scroll_handle.scroll_to_item(next, gpui::ScrollStrategy::Top);
         cx.notify();
     }
 
     fn select_previous(&mut self, _: &SelectPrevious, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.entries.is_empty() {
+        if self.status_entries.is_empty() {
             return;
         }
         let prev = match self.selected_entry {
@@ -413,7 +559,7 @@ impl VsGitPanel {
             None => 0,
         };
         self.selected_entry = Some(prev);
-        self.scroll_handle.scroll_to_item(prev, gpui::ScrollStrategy::Top);
+        self.status_scroll_handle.scroll_to_item(prev, gpui::ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -421,7 +567,7 @@ impl VsGitPanel {
         let Some(ix) = self.selected_entry else {
             return;
         };
-        let Some(entry) = self.entries.get(ix) else {
+        let Some(entry) = self.status_entries.get(ix) else {
             return;
         };
         if let VsGitListEntry::FileEntry {
@@ -525,7 +671,7 @@ impl VsGitPanel {
     }
 
     fn render_entries(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let entry_count = self.entries.len();
+        let entry_count = self.status_entries.len();
 
         uniform_list(
             "vs-git-entries",
@@ -534,7 +680,7 @@ impl VsGitPanel {
                 move |this: &mut Self, range: std::ops::Range<usize>, window, cx| {
                     range
                         .map(|ix| {
-                            let entry = &this.entries[ix];
+                            let entry = &this.status_entries[ix];
                             match entry {
                                 VsGitListEntry::GroupHeader { group, count } => this
                                     .render_group_header(*group, *count, window, cx)
@@ -555,15 +701,16 @@ impl VsGitPanel {
                                         cx,
                                     )
                                     .into_any_element(),
+                                _ => gpui::Empty.into_any_element(),
                             }
                         })
                         .collect()
                 },
             ),
         )
-        .size_full()
+        .flex_shrink()
         .with_sizing_behavior(ListSizingBehavior::Infer)
-        .track_scroll(&self.scroll_handle)
+        .track_scroll(&self.status_scroll_handle)
     }
 
     fn render_group_header(
@@ -748,12 +895,458 @@ impl VsGitPanel {
         row
     }
 
+    fn open_commit_file_diff(
+        &mut self,
+        sha: SharedString,
+        path: RepoPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(files) = self.commit_files.get(&sha) else {
+            return;
+        };
+        let Some(file) = files.iter().find(|f| f.path == path) else {
+            return;
+        };
+        let old_text = file.old_text.clone().unwrap_or_default();
+        let new_text = file.new_text.clone().unwrap_or_default();
+        let filename: SharedString = path
+            .as_ref()
+            .file_name()
+            .unwrap_or("")
+            .to_string()
+            .into();
+        let sha_short: SharedString = sha[..7.min(sha.len())].to_string().into();
+        let workspace = self.workspace.clone();
+
+        let diff_view = cx.new(|cx| {
+            crate::vs_commit_diff_view::VsCommitDiffView::new(
+                old_text,
+                new_text,
+                filename,
+                sha_short,
+                window,
+                cx,
+            )
+        });
+
+        if let Some(workspace) = workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                let pane = workspace.active_pane();
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(diff_view), true, true, None, window, cx);
+                });
+            });
+        }
+    }
+
+    fn render_history(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let entry_count = self.history_entries.len();
+
+        uniform_list(
+            "vs-git-history",
+            entry_count,
+            cx.processor(
+                move |this: &mut Self, range: std::ops::Range<usize>, window, cx| {
+                    range
+                        .map(|ix| {
+                            let entry = &this.history_entries[ix];
+                            match entry {
+                                VsGitListEntry::HistoryHeader { count } => this
+                                    .render_history_header(*count, cx)
+                                    .into_any_element(),
+                                VsGitListEntry::CommitEntry {
+                                    sha,
+                                    subject,
+                                    author,
+                                    timestamp,
+                                    expanded,
+                                } => this
+                                    .render_commit_entry(
+                                        ix,
+                                        sha.clone(),
+                                        subject.clone(),
+                                        author.clone(),
+                                        *timestamp,
+                                        *expanded,
+                                        cx,
+                                    )
+                                    .into_any_element(),
+                                VsGitListEntry::CommitFileEntry { sha, path, status } => this
+                                    .render_commit_file_entry(
+                                        ix,
+                                        sha.clone(),
+                                        path.clone(),
+                                        *status,
+                                        cx,
+                                    )
+                                    .into_any_element(),
+                                VsGitListEntry::LoadMoreButton => this
+                                    .render_load_more(cx)
+                                    .into_any_element(),
+                                _ => gpui::Empty.into_any_element(),
+                            }
+                        })
+                        .collect()
+                },
+            ),
+        )
+        .flex_grow()
+        .with_sizing_behavior(ListSizingBehavior::Infer)
+        .track_scroll(&self.history_scroll_handle)
+    }
+
+    fn render_history_header_standalone(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let count = self.commit_entries.len();
+        let collapsed = self.history_collapsed;
+        h_flex()
+            .id("history-header-standalone")
+            .w_full()
+            .px_2()
+            .py_0p5()
+            .gap_1()
+            .bg(cx.theme().colors().surface_background)
+            .cursor_pointer()
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                this.history_collapsed = !this.history_collapsed;
+                this.rebuild_entries(cx);
+            }))
+            .child(
+                Icon::new(if collapsed {
+                    IconName::ChevronRight
+                } else {
+                    IconName::ChevronDown
+                })
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .flex_grow()
+                    .child(
+                        Label::new("Commit History")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .weight(gpui::FontWeight::BOLD),
+                    )
+                    .child(
+                        Label::new(format!("({})", count))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+    }
+
+    fn render_history_list(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Build a flat list of just commits and their files (no header)
+        let mut list_entries: Vec<VsGitListEntry> = Vec::new();
+        for commit in &self.commit_entries {
+            let expanded = self.expanded_commits.contains(&commit.sha);
+            list_entries.push(VsGitListEntry::CommitEntry {
+                sha: commit.sha.clone(),
+                subject: commit.subject.clone(),
+                author: commit.author_name.clone(),
+                timestamp: commit.commit_timestamp,
+                expanded,
+            });
+            if expanded {
+                if let Some(files) = self.commit_files.get(&commit.sha) {
+                    for file in files {
+                        list_entries.push(VsGitListEntry::CommitFileEntry {
+                            sha: commit.sha.clone(),
+                            path: file.path.clone(),
+                            status: file.status(),
+                        });
+                    }
+                }
+            }
+        }
+        if self.has_more_commits {
+            list_entries.push(VsGitListEntry::LoadMoreButton);
+        }
+
+        let entry_count = list_entries.len();
+
+        // Store in a shared ref for the closure
+        let list_entries = std::sync::Arc::new(list_entries);
+
+        uniform_list(
+            "vs-git-history-list",
+            entry_count,
+            cx.processor({
+                let list_entries = list_entries.clone();
+                move |this: &mut Self, range: std::ops::Range<usize>, _window, cx| {
+                    range
+                        .map(|ix| {
+                            let entry = &list_entries[ix];
+                            match entry {
+                                VsGitListEntry::CommitEntry {
+                                    sha,
+                                    subject,
+                                    author,
+                                    timestamp,
+                                    expanded,
+                                } => this
+                                    .render_commit_entry(
+                                        ix,
+                                        sha.clone(),
+                                        subject.clone(),
+                                        author.clone(),
+                                        *timestamp,
+                                        *expanded,
+                                        cx,
+                                    )
+                                    .into_any_element(),
+                                VsGitListEntry::CommitFileEntry { sha, path, status } => this
+                                    .render_commit_file_entry(
+                                        ix,
+                                        sha.clone(),
+                                        path.clone(),
+                                        *status,
+                                        cx,
+                                    )
+                                    .into_any_element(),
+                                VsGitListEntry::LoadMoreButton => this
+                                    .render_load_more(cx)
+                                    .into_any_element(),
+                                _ => gpui::Empty.into_any_element(),
+                            }
+                        })
+                        .collect()
+                }
+            }),
+        )
+        .flex_grow()
+        .with_sizing_behavior(ListSizingBehavior::Auto)
+        .track_scroll(&self.history_scroll_handle)
+    }
+
+    fn render_history_header(&self, count: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let collapsed = self.history_collapsed;
+        h_flex()
+            .id("history-header")
+            .w_full()
+            .px_2()
+            .py_0p5()
+            .gap_1()
+            .bg(cx.theme().colors().surface_background)
+            .cursor_pointer()
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                this.history_collapsed = !this.history_collapsed;
+                this.rebuild_entries(cx);
+            }))
+            .child(
+                Icon::new(if collapsed {
+                    IconName::ChevronRight
+                } else {
+                    IconName::ChevronDown
+                })
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .flex_grow()
+                    .child(
+                        Label::new("Commit History")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .weight(gpui::FontWeight::BOLD),
+                    )
+                    .child(
+                        Label::new(format!("({})", count))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+    }
+
+    fn render_commit_entry(
+        &self,
+        ix: usize,
+        sha: SharedString,
+        subject: SharedString,
+        author: SharedString,
+        timestamp: i64,
+        expanded: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_selected = self.selected_entry == Some(ix);
+        let time_str = format_relative_time(timestamp);
+        let sha_short: SharedString = sha[..7.min(sha.len())].to_string().into();
+
+        h_flex()
+            .id(ElementId::NamedInteger("commit-entry".into(), ix as u64))
+            .w_full()
+            .px_2()
+            .py_0p5()
+            .gap_1()
+            .when(is_selected, |el| {
+                el.bg(cx.theme().colors().ghost_element_selected)
+            })
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .on_click({
+                let click_sha = sha.clone();
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.selected_entry = Some(ix);
+                    this.toggle_commit(click_sha.clone(), window, cx);
+                })
+            })
+            .child(
+                Icon::new(if expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .flex_grow()
+                    .overflow_x_hidden()
+                    .gap_1()
+                    .child(
+                        Label::new(subject)
+                            .size(LabelSize::Small)
+                            .color(Color::Default)
+                            .single_line(),
+                    ),
+            )
+            .child(
+                Label::new(sha_short)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+            .child(
+                Label::new(author)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted)
+                    .single_line(),
+            )
+            .child(
+                Label::new(time_str)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+    }
+
+    fn render_commit_file_entry(
+        &self,
+        ix: usize,
+        _sha: SharedString,
+        path: RepoPath,
+        status: CommitFileStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_selected = self.selected_entry == Some(ix);
+        let path_ref: &std::sync::Arc<util::rel_path::RelPath> = path.as_ref();
+        let filename = path_ref.file_name().unwrap_or("").to_string();
+        let parent = path_ref
+            .parent()
+            .map(|p: &util::rel_path::RelPath| {
+                p.display(util::paths::PathStyle::Posix).to_string()
+            })
+            .filter(|p: &String| !p.is_empty());
+
+        let (status_letter, status_color) = match status {
+            CommitFileStatus::Added => ("A", Color::Created),
+            CommitFileStatus::Modified => ("M", Color::Modified),
+            CommitFileStatus::Deleted => ("D", Color::Deleted),
+        };
+
+        h_flex()
+            .id(ElementId::NamedInteger("commit-file".into(), ix as u64))
+            .w_full()
+            .pl(px(24.))
+            .pr_2()
+            .py_0p5()
+            .gap_1()
+            .when(is_selected, |el| {
+                el.bg(cx.theme().colors().ghost_element_selected)
+            })
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .on_click({
+                let click_sha = _sha.clone();
+                let click_path = path.clone();
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.selected_entry = Some(ix);
+                    this.open_commit_file_diff(click_sha.clone(), click_path.clone(), window, cx);
+                    cx.notify();
+                })
+            })
+            .child(
+                h_flex()
+                    .gap_1()
+                    .flex_grow()
+                    .overflow_x_hidden()
+                    .child(
+                        Label::new(filename)
+                            .size(LabelSize::Small)
+                            .color(Color::Default),
+                    )
+                    .children(parent.map(|p| {
+                        Label::new(p).size(LabelSize::Small).color(Color::Muted)
+                    })),
+            )
+            .child(
+                Label::new(status_letter)
+                    .size(LabelSize::Small)
+                    .color(status_color),
+            )
+    }
+
+    fn render_load_more(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .id("load-more-commits")
+            .w_full()
+            .px_2()
+            .py_1()
+            .justify_center()
+            .cursor_pointer()
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                let skip = this.commit_entries.len();
+                this.load_history(skip, window, cx);
+            }))
+            .child(
+                Label::new("Load More...")
+                    .size(LabelSize::Small)
+                    .color(Color::Accent),
+            )
+    }
+
     fn render_empty_state(&self, _cx: &App) -> impl IntoElement {
         v_flex().size_full().justify_center().items_center().child(
             Label::new("No changes")
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
+    }
+}
+
+fn format_relative_time(timestamp: i64) -> SharedString {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let diff = now - timestamp;
+    if diff < 60 {
+        "just now".into()
+    } else if diff < 3600 {
+        format!("{}m ago", diff / 60).into()
+    } else if diff < 86400 {
+        format!("{}h ago", diff / 3600).into()
+    } else if diff < 604800 {
+        format!("{}d ago", diff / 86400).into()
+    } else if diff < 2592000 {
+        format!("{}w ago", diff / 604800).into()
+    } else {
+        format!("{}mo ago", diff / 2592000).into()
     }
 }
 
@@ -783,7 +1376,9 @@ fn git_status_letter(status: FileStatus) -> &'static str {
 
 impl Render for VsGitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_entries = !self.entries.is_empty();
+        let has_status = !self.status_entries.is_empty();
+        let has_history = !self.history_entries.is_empty();
+        let border_color = cx.theme().colors().border_variant;
 
         v_flex()
             .id("vs_git_panel")
@@ -799,12 +1394,63 @@ impl Render for VsGitPanel {
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
             .child(self.render_branch_indicator(cx))
-            .map(|el| {
-                if has_entries {
-                    el.child(self.render_entries(window, cx))
-                } else {
-                    el.child(self.render_empty_state(cx))
-                }
+            .relative()
+            .when(has_status, |el| {
+                el.child(self.render_entries(window, cx))
+            })
+            .when(!has_status && !has_history, |el| {
+                el.child(self.render_empty_state(cx))
+            })
+            .on_drag_move::<DraggedHistoryHandle>(
+                cx.listener(|this, event: &gpui::DragMoveEvent<DraggedHistoryHandle>, _window, _cx| {
+                    let bounds = event.bounds;
+                    let drag_y = event.event.position.y;
+                    let bounds_height = bounds.bottom() - bounds.top();
+                    if bounds_height > px(0.) {
+                        // drag_y is from top; we want ratio from bottom
+                        let ratio_from_bottom = ((bounds.bottom() - drag_y) / bounds_height).clamp(0.1, 0.8);
+                        this.history_height = ratio_from_bottom;
+                    }
+                }),
+            )
+            .when(has_history, |el| {
+                let history_collapsed = self.history_collapsed;
+                let history_height = self.history_height;
+                el.child(
+                    v_flex()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .w_full()
+                        .when(history_collapsed, |el| el)
+                        .when(!history_collapsed, |el| el.h(relative(history_height)))
+                        .bg(cx.theme().colors().panel_background)
+                        // Drag handle border (only when expanded)
+                        .when(!history_collapsed, |el| {
+                            el.child(
+                                div()
+                                    .id("history-resize-handle")
+                                    .w_full()
+                                    .h(px(4.))
+                                    .mt(px(-2.))
+                                    .cursor_row_resize()
+                                    .on_drag(DraggedHistoryHandle, |_, _, _, cx| cx.new(|_| gpui::Empty))
+                                    .hover(|style| style.bg(cx.theme().colors().border))
+                            )
+                        })
+                        // Header
+                        .child(self.render_history_header_standalone(cx))
+                        // Scrollable content (hidden when collapsed)
+                        .when(!history_collapsed, |el| {
+                            el.child(
+                                v_flex()
+                                    .flex_grow()
+                                    .min_h_0()
+                                    .overflow_hidden()
+                                    .child(self.render_history_list(window, cx)),
+                            )
+                        }),
+                )
             })
     }
 }

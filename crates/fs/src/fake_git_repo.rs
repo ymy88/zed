@@ -731,6 +731,14 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn branch_log(
+        &self,
+        _skip: usize,
+        _limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<git::repository::FileHistoryEntry>>> {
+        async move { Ok(Vec::new()) }.boxed()
+    }
+
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,
