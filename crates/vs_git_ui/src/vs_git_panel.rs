@@ -26,7 +26,7 @@ struct DraggedHistoryHandle;
 
 const VS_GIT_PANEL_KEY: &str = "VsGitPanel";
 const UPDATE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(50);
-const HISTORY_PAGE_SIZE: usize = 5;
+const HISTORY_PAGE_SIZE: usize = 20;
 
 actions!(vs_git_panel, [Close, Toggle, ToggleFocus, SelectNext, SelectPrevious,]);
 
