@@ -25,6 +25,7 @@ struct DraggedVsDiffHandle;
 struct HunkIconInfo {
     rhs_start_row: u32,
     hunk_height: u32, // max(rhs_lines, lhs_lines) — total height including spacers
+    rhs_spacer_height: u32, // spacer lines inserted on RHS (for deletion hunks)
     rhs_editor: Entity<Editor>,
     uncommitted_diff: Entity<BufferDiff>,
 }
@@ -480,6 +481,7 @@ impl VsFileDiffView {
                 hunk_icons.push(HunkIconInfo {
                     rhs_start_row: hunk.row_range.start.0,
                     hunk_height,
+                    rhs_spacer_height: if diff < 0 { (-diff) as u32 } else { 0 },
                     rhs_editor: rhs_editor.clone(),
                     uncommitted_diff: uncommitted_diff.clone(),
                 });
@@ -589,7 +591,10 @@ impl Render for VsFileDiffView {
                 Bias::Left,
             );
             let display_row = display_point.row().0 as f32;
-            let top = line_height * display_row - scroll_top;
+            // Subtract RHS spacer height: the spacer block is inserted before
+            // rhs_start_row, so point_to_display_point returns the row AFTER
+            // the spacer. We need to move the icons back up to cover the spacer.
+            let top = line_height * (display_row - info.rhs_spacer_height as f32) - scroll_top;
             let hunk_height_total = line_height * info.hunk_height as f32;
 
             let rhs_editor = info.rhs_editor.clone();
