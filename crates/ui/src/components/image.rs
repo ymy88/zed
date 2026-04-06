@@ -20,6 +20,7 @@ pub enum VectorName {
     Grid,
     ProTrialStamp,
     ProUserStamp,
+    #[strum(serialize = "zed_logo_with_vscode")]
     ZedLogo,
     ZedXCopilot,
 }
@@ -177,6 +178,6 @@ mod tests {
 
     #[test]
     fn vector_path() {
-        assert_eq!(VectorName::ZedLogo.path().as_ref(), "images/zed_logo.svg");
+        assert_eq!(VectorName::ZedLogo.path().as_ref(), "images/zed_logo_with_vscode.svg");
     }
 }
