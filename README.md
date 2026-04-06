@@ -1,3 +1,44 @@
+# Zed + VS Code-Style Git UI (Fork)
+
+This fork adds a **VS Code-style Source Control panel** and **side-by-side diff view** to Zed, because we love how VS Code handles Git.
+
+### Why This Fork?
+
+Zed's built-in Git panel groups files by "tracked" vs "untracked" and opens a single combined diff for all changes. We prefer VS Code's approach: separating **Staged Changes** from **Changes** (unstaged), and clicking a file opens a diff for **that file only**. This fork brings that workflow to Zed.
+
+### Key Features
+
+1. **Staged vs Unstaged grouping** — Files are categorized into "Staged Changes" and "Changes" sections, just like VS Code. Partially staged files appear in both. No more guessing what's going into your next commit.
+
+2. **Per-file diff view** — Clicking a file opens a side-by-side diff for that single file. "Changes" shows working copy vs index (`git diff`); "Staged Changes" shows index vs HEAD (`git diff --cached`).
+
+3. **Fast custom diff view** — Zed's built-in `SplittableEditor` builds row-by-row mappings (O(lines)), taking ~1 second for a 6,000-line file and 3–4 seconds for files like `Cargo.lock` (tens of thousands of lines). We replaced it with a custom two-editor implementation using block spacers at hunk boundaries — O(hunks) instead of O(lines), rendering instantly regardless of file size.
+
+### Additional Features
+
+- **Stage and restore buttons** in the divider column between LHS and RHS editors (+ to stage, → to restore)
+- **Stage, unstage, and discard buttons** per file in the Source Control panel
+- **Draggable resize handle** between LHS and RHS editors (double-click to reset to 50/50)
+- **Diff toolbar** with previous/next hunk navigation arrows
+- **Open File button** that jumps to the same scroll position in the regular editor
+- **Synchronized scrolling** between LHS and RHS
+- **Diagonal line pattern spacer blocks** for visual alignment at hunk boundaries
+- **Auto-scroll to first change** when opening a diff
+- **Custom logo** (Zed + VS Code) to distinguish this build
+
+### Known Issues
+
+- **No diff highlighting on the left side** — The LHS editor shows the old content but does not highlight changed/deleted lines with background colors. Only the RHS has diff decorations.
+
+### Key Crate
+
+All new code lives in `crates/vs_git_ui/` with three main files:
+- `vs_git_panel.rs` — the Source Control side panel
+- `vs_file_diff_view.rs` — the side-by-side diff view
+- `vs_diff_toolbar.rs` — the toolbar with navigation and open file
+
+---
+
 # Zed
 
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
