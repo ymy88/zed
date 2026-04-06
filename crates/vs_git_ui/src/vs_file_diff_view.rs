@@ -429,7 +429,6 @@ impl VsFileDiffView {
             return;
         }
 
-        let spacer_color = gpui::hsla(0.0, 0.0, 0.3, 0.1);
 
         let mut rhs_blocks = Vec::new();
         let mut lhs_blocks = Vec::new();
@@ -502,10 +501,15 @@ impl VsFileDiffView {
                     height: Some(height),
                     style: BlockStyle::Fixed,
                     render: Arc::new(move |cx| {
+                        let color = cx.app.theme().colors().border_variant;
+                        let scale = cx.window.scale_factor();
+                        let line_h = f32::from(cx.line_height) * scale;
+                        let pattern_size = (line_h / 2.0).floor().max(2.0);
+                        let background = gpui::pattern_slash(color, 2.0, pattern_size - 2.0);
                         gpui::div()
                             .h(cx.line_height * height as f32)
-                            .w_full()
-                            .bg(spacer_color)
+                            .w(cx.max_width)
+                            .bg(background)
                             .into_any_element()
                     }),
                     priority: 0,
@@ -526,9 +530,15 @@ impl VsFileDiffView {
                     height: Some(height),
                     style: BlockStyle::Fixed,
                     render: Arc::new(move |cx| {
+                        let color = cx.app.theme().colors().border_variant;
+                        let scale = cx.window.scale_factor();
+                        let line_h = f32::from(cx.line_height) * scale;
+                        let pattern_size = (line_h / 2.0).floor().max(2.0);
+                        let background = gpui::pattern_slash(color, 2.0, pattern_size - 2.0);
                         gpui::div()
                             .h(cx.line_height * height as f32)
-                            .w_full()
+                            .w(cx.max_width)
+                            .bg(background)
                             .into_any_element()
                     }),
                     priority: 0,
@@ -900,4 +910,3 @@ impl Item for VsFileDiffView {
         });
     }
 }
-
