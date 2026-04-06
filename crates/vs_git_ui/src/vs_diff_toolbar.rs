@@ -3,17 +3,21 @@ use gpui::{
     Action, App, Context, Entity, EventEmitter, Focusable, IntoElement, Render, WeakEntity, Window,
 };
 use ui::{IconButton, IconName, IconButtonShape, Tooltip, prelude::*};
-use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, item::ItemHandle};
+use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle};
 
 use crate::vs_file_diff_view::VsFileDiffView;
 
 pub struct VsDiffToolbar {
     diff_view: Option<WeakEntity<VsFileDiffView>>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl VsDiffToolbar {
-    pub fn new() -> Self {
-        Self { diff_view: None }
+    pub fn new(workspace: WeakEntity<Workspace>) -> Self {
+        Self {
+            diff_view: None,
+            workspace,
+        }
     }
 
     fn diff_view(&self, _cx: &App) -> Option<Entity<VsFileDiffView>> {
@@ -60,8 +64,53 @@ impl Render for VsDiffToolbar {
         };
         let focus_handle = diff_view.focus_handle(cx);
 
+        let workspace = self.workspace.clone();
+        let diff_view_for_open = diff_view.downgrade();
+
         h_flex()
             .gap_1()
+            .child(
+                IconButton::new("open-file", IconName::File)
+                    .shape(IconButtonShape::Square)
+                    .tooltip(Tooltip::text("Open File"))
+                    .on_click(move |_, window, cx| {
+                        if let Some(diff_view) = diff_view_for_open.upgrade() {
+                            // Read the RHS editor's buffer file info first
+                            let project_path = diff_view.read(cx).rhs_editor.read(cx)
+                                .buffer().read(cx)
+                                .all_buffers().into_iter().next()
+                                .and_then(|buffer| {
+                                    let file = buffer.read(cx).file()?;
+                                    Some(project::ProjectPath {
+                                        worktree_id: file.worktree_id(cx),
+                                        path: file.path().clone(),
+                                    })
+                                });
+                            // Get current scroll position to restore after opening
+                            let scroll_row = diff_view.update(cx, |dv, cx| {
+                                dv.rhs_editor.update(cx, |editor, cx| {
+                                    editor.scroll_position(cx).y as u32
+                                })
+                            });
+
+                            if let (Some(project_path), Some(workspace)) = (project_path, workspace.upgrade()) {
+                                let task = workspace.update(cx, |workspace, cx| {
+                                    workspace.open_path_preview(project_path, None, true, false, true, window, cx)
+                                });
+                                window.spawn(cx, async move |cx| {
+                                    let item = task.await?;
+                                    if let Some(editor) = item.downcast::<editor::Editor>() {
+                                        editor.update_in(cx, |editor, window, cx| {
+                                            let point = gpui::Point::new(0.0, scroll_row as f64);
+                                            editor.set_scroll_position(point, window, cx);
+                                        })?;
+                                    }
+                                    anyhow::Ok(())
+                                }).detach_and_log_err(cx);
+                            }
+                        }
+                    }),
+            )
             .child(
                 IconButton::new("prev-hunk", IconName::ArrowUp)
                     .shape(IconButtonShape::Square)

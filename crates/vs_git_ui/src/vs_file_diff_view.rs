@@ -1,16 +1,14 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, MultiBuffer, ToPoint as _};
+use editor::{Editor, EditorEvent, MultiBuffer};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
     IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription, Task,
     WeakEntity, Window,
 };
 use language::HighlightedText;
-use multi_buffer::Anchor;
 use project::{Project, ProjectPath};
 use std::any::{Any, TypeId};
-use std::ops::Range;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, prelude::*};
@@ -144,6 +142,7 @@ impl VsFileDiffView {
         let lhs_multibuffer = cx.new(|cx| {
             MultiBuffer::singleton(lhs_buffer, cx)
         });
+
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer, None, window, cx);
@@ -454,10 +453,6 @@ impl VsFileDiffView {
                 );
 
                 let height = (-diff) as u32;
-                let rhs_editor_for_block = rhs_editor.clone();
-                let uncommitted_diff_for_block = uncommitted_diff.clone();
-                let base_byte_range = hunk.diff_base_byte_range.start.0
-                    ..hunk.diff_base_byte_range.end.0;
                 rhs_blocks.push(BlockProperties {
                     placement: BlockPlacement::Below(anchor),
                     height: Some(height),
@@ -824,83 +819,3 @@ impl Item for VsFileDiffView {
     }
 }
 
-fn render_unstaged_hunk_controls(
-    row: u32,
-    _status: &buffer_diff::DiffHunkStatus,
-    hunk_range: Range<Anchor>,
-    is_created_file: bool,
-    line_height: gpui::Pixels,
-    editor: &Entity<Editor>,
-    uncommitted_diff: &Entity<BufferDiff>,
-    _window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
-    h_flex()
-        .h(line_height)
-        .items_center()
-        .justify_center()
-        .gap_0p5()
-        .child(
-            gpui::div()
-                .id(("stage", row as u64))
-                .cursor_pointer()
-                .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.5, 0.2)))
-                .rounded_sm()
-                .p_0p5()
-                .child(ui::Icon::new(ui::IconName::Plus).size(ui::IconSize::XSmall))
-                .on_click({
-                    let editor = editor.clone();
-                    let uncommitted_diff = uncommitted_diff.clone();
-                    let hunk_range = hunk_range.clone();
-                    move |_event, _window, cx| {
-                        let buffer = editor.read(cx).buffer().read(cx)
-                            .all_buffers().into_iter().next();
-                        if let Some(buffer) = buffer {
-                            let buffer_snapshot = buffer.read(cx).snapshot();
-                            let file_exists = buffer_snapshot
-                                .file()
-                                .is_some_and(|file| file.disk_state().exists());
-                            let multibuffer_snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-                            let hunk_point = hunk_range.start.to_point(&multibuffer_snapshot);
-                            let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
-                            let matching_hunks: Vec<_> = uncommitted_snapshot
-                                .hunks(&buffer_snapshot)
-                                .filter(|h| {
-                                    h.range.start.row <= hunk_point.row
-                                        && h.range.end.row >= hunk_point.row
-                                })
-                                .collect();
-                            if !matching_hunks.is_empty() {
-                                uncommitted_diff.update(cx, |diff, cx| {
-                                    diff.stage_or_unstage_hunks(
-                                        true, &matching_hunks, &buffer_snapshot, file_exists, cx,
-                                    );
-                                });
-                            }
-                        }
-                    }
-                })
-        )
-        .when(!is_created_file, |el| {
-            el.child(
-                gpui::div()
-                    .id(("restore", row as u64))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.5, 0.2)))
-                    .rounded_sm()
-                    .p_0p5()
-                    .child(ui::Icon::new(ui::IconName::ArrowRight).size(ui::IconSize::XSmall))
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                let snapshot = editor.snapshot(window, cx);
-                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot());
-                                editor.restore_hunks_in_ranges(vec![point..point], window, cx);
-                            });
-                        }
-                    })
-            )
-        })
-        .into_any_element()
-}

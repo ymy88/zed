@@ -432,6 +432,28 @@ impl VsGitPanel {
         }
     }
 
+    fn open_file(
+        &mut self,
+        repo_path: RepoPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.active_repository.as_ref() else {
+            return;
+        };
+        let project_path = repo.read(cx).repo_path_to_project_path(&repo_path, cx);
+        let Some(project_path) = project_path else {
+            return;
+        };
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace
+                    .open_path_preview(project_path, None, true, false, true, window, cx)
+                    .detach_and_log_err(cx);
+            });
+        }
+    }
+
     fn open_file_diff(
         &mut self,
         repo_path: RepoPath,
@@ -659,6 +681,22 @@ impl VsGitPanel {
                     .size(LabelSize::Small)
                     .color(status_color),
             );
+
+        // Open file button (for all groups)
+        {
+            let open_path = repo_path.clone();
+            row = row.child(
+                IconButton::new(
+                    ElementId::NamedInteger("open-file".into(), ix_u64),
+                    IconName::File,
+                )
+                .icon_size(IconSize::XSmall)
+                .tooltip(Tooltip::text("Open File"))
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.open_file(open_path.clone(), window, cx);
+                })),
+            );
+        }
 
         match group {
             ChangeGroup::StagedChanges => {

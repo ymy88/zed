@@ -1236,7 +1236,7 @@ fn initialize_pane(
             toolbar.add_item(project_diff_toolbar, window, cx);
             let branch_diff_toolbar = cx.new(BranchDiffToolbar::new);
             toolbar.add_item(branch_diff_toolbar, window, cx);
-            let vs_diff_toolbar = cx.new(|_| vs_git_ui::VsDiffToolbar::new());
+            let vs_diff_toolbar = cx.new(|_| vs_git_ui::VsDiffToolbar::new(workspace_handle.clone()));
             toolbar.add_item(vs_diff_toolbar, window, cx);
             let commit_view_toolbar = cx.new(|_| CommitViewToolbar::new());
             toolbar.add_item(commit_view_toolbar, window, cx);
