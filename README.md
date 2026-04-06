@@ -14,6 +14,10 @@ Zed's built-in Git panel groups files by "tracked" vs "untracked" and opens a si
 
 3. **Fast custom diff view** — Zed's built-in `SplittableEditor` builds row-by-row mappings (O(lines)), taking ~1 second for a 6,000-line file and 3–4 seconds for files like `Cargo.lock` (tens of thousands of lines). We replaced it with a custom two-editor implementation using block spacers at hunk boundaries — O(hunks) instead of O(lines), rendering instantly regardless of file size.
 
+4. **Commit history** — Collapsible commit history section pinned to the bottom of the Source Control panel. Click a commit to expand and see its file changes; click a file to open the commit's diff view with alignment blocks. Paginated with "Load More" for large histories. Draggable resize handle between the changes and history sections.
+
+5. **"Compared to [branch]" view** — When on a feature branch, shows aggregate file changes compared to the base branch (like GitHub's "Files changed" tab). Click any file to see the combined diff from the fork point to HEAD. Automatically detects the upstream tracking branch or falls back to the default branch.
+
 ### Additional Features
 
 - **Stage and restore buttons** in the divider column between LHS and RHS editors (+ to stage, → to restore)
@@ -24,6 +28,7 @@ Zed's built-in Git panel groups files by "tracked" vs "untracked" and opens a si
 - **Synchronized scrolling** between LHS and RHS
 - **Diagonal line pattern spacer blocks** for visual alignment at hunk boundaries
 - **Auto-scroll to first change** when opening a diff
+- **Proactive diff recalculation** after staging — reduces feedback from ~480ms to ~37ms
 - **Custom logo** (Zed + VS Code) to distinguish this build
 
 ### Known Issues
@@ -53,9 +58,10 @@ script/bundle-mac -do
 
 ### Key Crate
 
-All new code lives in `crates/vs_git_ui/` with three main files:
-- `vs_git_panel.rs` — the Source Control side panel
-- `vs_file_diff_view.rs` — the side-by-side diff view
+All new code lives in `crates/vs_git_ui/` with four main files:
+- `vs_git_panel.rs` — the Source Control side panel with changes, history, and compared sections
+- `vs_file_diff_view.rs` — the side-by-side diff view for working copy changes
+- `vs_commit_diff_view.rs` — the side-by-side diff view for commit and branch comparison diffs
 - `vs_diff_toolbar.rs` — the toolbar with navigation and open file
 
 ---
