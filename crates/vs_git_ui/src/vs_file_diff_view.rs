@@ -910,12 +910,12 @@ impl Item for VsFileDiffView {
 
     fn added_to_workspace(
         &mut self,
-        workspace: &mut Workspace,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _workspace: &mut Workspace,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) {
-        self.rhs_editor.update(cx, |editor, cx| {
-            editor.added_to_workspace(workspace, window, cx);
-        });
+        // Do NOT forward to rhs_editor — it would set a workspace serialization ID
+        // on the inner editor, causing FOREIGN KEY errors when persisting selections
+        // (the inner editor is not a registered workspace item).
     }
 }
