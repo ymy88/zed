@@ -59,7 +59,6 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
         ProjectDiff::register(workspace, cx);
         CommitModal::register(workspace);
-        git_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
         conflict_view::register_conflict_notification(workspace, cx);
