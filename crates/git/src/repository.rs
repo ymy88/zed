@@ -759,6 +759,15 @@ pub trait GitRepository: Send + Sync {
         skip: usize,
         limit: usize,
     ) -> BoxFuture<'_, Result<Vec<FileHistoryEntry>>>;
+    fn diff_name_status(
+        &self,
+        base_ref: &str,
+    ) -> BoxFuture<'_, Result<Vec<(RepoPath, CommitFileStatus)>>>;
+    fn diff_file_text(
+        &self,
+        ref_name: &str,
+        path: &RepoPath,
+    ) -> BoxFuture<'_, Result<(String, String)>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -1986,6 +1995,98 @@ impl GitRepository for RealGitRepository {
                 }
 
                 Ok(entries)
+            })
+            .boxed()
+    }
+
+    fn diff_name_status(
+        &self,
+        base_ref: &str,
+    ) -> BoxFuture<'_, Result<Vec<(RepoPath, CommitFileStatus)>>> {
+        let git_binary = self.git_binary();
+        let base_ref = base_ref.to_string();
+        self.executor
+            .spawn(async move {
+                let git = git_binary?;
+                let output = git
+                    .build_command(&["diff", "--name-status", "--merge-base", &base_ref])
+                    .output()
+                    .await?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!("git diff --name-status failed: {stderr}");
+                }
+
+                let stdout = std::str::from_utf8(&output.stdout)?;
+                let mut files = Vec::new();
+                for line in stdout.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let mut parts = line.splitn(2, '\t');
+                    let status_char = parts.next().unwrap_or("");
+                    let path_str = parts.next().unwrap_or("");
+                    if path_str.is_empty() {
+                        continue;
+                    }
+                    let status = match status_char {
+                        "A" => CommitFileStatus::Added,
+                        "D" => CommitFileStatus::Deleted,
+                        _ => CommitFileStatus::Modified,
+                    };
+                    if let Ok(repo_path) = RepoPath::new(path_str) {
+                        files.push((repo_path, status));
+                    }
+                }
+                Ok(files)
+            })
+            .boxed()
+    }
+
+    fn diff_file_text(
+        &self,
+        ref_name: &str,
+        path: &RepoPath,
+    ) -> BoxFuture<'_, Result<(String, String)>> {
+        let git_binary = self.git_binary();
+        let ref_name = ref_name.to_string();
+        let path = path.clone();
+        self.executor
+            .spawn(async move {
+                let git = git_binary?;
+
+                // Old text: git show <merge-base>:<path>
+                // First find the merge base
+                let merge_base_output = git
+                    .build_command(&["merge-base", "HEAD", &ref_name])
+                    .output()
+                    .await?;
+                let merge_base = std::str::from_utf8(&merge_base_output.stdout)?.trim().to_string();
+
+                let old_output = git
+                    .build_command(&["show", &format!("{}:{}", merge_base, path.as_unix_str())])
+                    .output()
+                    .await;
+                let old_text = old_output
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                    .unwrap_or_default();
+
+                // New text: git show HEAD:<path>
+                let new_output = git
+                    .build_command(&["show", &format!("HEAD:{}", path.as_unix_str())])
+                    .output()
+                    .await;
+                let new_text = new_output
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                    .unwrap_or_default();
+
+                Ok((old_text, new_text))
             })
             .boxed()
     }

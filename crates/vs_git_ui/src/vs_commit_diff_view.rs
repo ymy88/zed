@@ -58,9 +58,14 @@ impl VsCommitDiffView {
             buffer.set_capability(language::Capability::ReadOnly, cx);
             buffer
         });
-        let rhs_multibuffer = cx.new(|cx| MultiBuffer::singleton(rhs_buffer, cx));
+        let rhs_multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::singleton(rhs_buffer, cx);
+            multibuffer.set_show_deleted_hunks(false, cx);
+            multibuffer
+        });
         let rhs_editor = cx.new(|cx| {
             let mut editor = Editor::for_multibuffer(rhs_multibuffer, None, window, cx);
+            editor.start_temporary_diff_override();
             editor.disable_diagnostics(cx);
             editor.set_show_breakpoints(false, cx);
             // Hide default hunk controls

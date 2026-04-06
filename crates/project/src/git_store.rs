@@ -4725,6 +4725,35 @@ impl Repository {
         })
     }
 
+    pub fn diff_name_status(
+        &mut self,
+        base_ref: String,
+    ) -> oneshot::Receiver<Result<Vec<(git::repository::RepoPath, git::repository::CommitFileStatus)>>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.diff_name_status(&base_ref).await
+                }
+                RepositoryState::Remote(_) => Ok(Vec::new()),
+            }
+        })
+    }
+
+    pub fn diff_file_text(
+        &mut self,
+        ref_name: String,
+        path: git::repository::RepoPath,
+    ) -> oneshot::Receiver<Result<(String, String)>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.diff_file_text(&ref_name, &path).await
+                }
+                RepositoryState::Remote(_) => Ok((String::new(), String::new())),
+            }
+        })
+    }
+
     pub fn get_graph_data(
         &self,
         log_source: LogSource,

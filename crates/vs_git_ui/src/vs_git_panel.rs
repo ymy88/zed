@@ -105,6 +105,9 @@ pub struct VsGitPanel {
     history_loaded: bool,
     history_collapsed: bool,
     history_height: f32,
+    base_branch: Option<SharedString>,
+    compared_files: Vec<(RepoPath, CommitFileStatus)>,
+    compared_collapsed: bool,
     has_more_commits: bool,
     load_history_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -161,6 +164,9 @@ impl VsGitPanel {
                 history_loaded: false,
                 history_collapsed: false,
                 history_height: 0.4,
+                base_branch: None,
+                compared_files: Vec::new(),
+                compared_collapsed: false,
                 has_more_commits: true,
                 load_history_task: Task::ready(()),
                 _subscriptions: vec![subscription],
@@ -182,8 +188,76 @@ impl VsGitPanel {
             .ok();
         });
 
-        if !self.history_loaded {
-            self.load_history(0, window, cx);
+        self.load_history(0, window, cx);
+        self.load_compared_files(window, cx);
+    }
+
+    fn load_compared_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        // Determine current branch and base branch
+        let snapshot = repo.read(cx).snapshot();
+        let current_branch = snapshot.branch.as_ref().map(|b| b.name().to_string());
+        let upstream_ref = snapshot.branch.as_ref()
+            .and_then(|b| b.upstream.as_ref())
+            .map(|u| u.ref_name.clone());
+
+        // If we have an upstream, use that; otherwise find the default branch
+        if let Some(upstream) = upstream_ref {
+            let base_name: SharedString = upstream.split('/').last()
+                .unwrap_or(&upstream).to_string().into();
+            let rx = repo.update(cx, |repo, _cx| {
+                repo.diff_name_status(upstream.to_string())
+            });
+            cx.spawn_in(window, async move |this, cx| {
+                if let Ok(Ok(files)) = rx.await {
+                    this.update(cx, |this, cx| {
+                        this.base_branch = Some(base_name);
+                        this.compared_files = files;
+                        this.rebuild_entries(cx);
+                    }).ok();
+                }
+            }).detach();
+        } else {
+            // No upstream — try default branch
+            let rx = repo.update(cx, |repo, _cx| {
+                repo.default_branch(true)
+            });
+            let current_branch = current_branch.clone();
+            cx.spawn_in(window, async move |this, cx| {
+                if let Ok(Ok(Some(default_branch))) = rx.await {
+                    let default_name = default_branch.split('/').last()
+                        .unwrap_or(&default_branch).to_string();
+
+                    // Don't compare if we're on the default branch
+                    let is_default = current_branch.as_deref() == Some(&default_name);
+                    if is_default {
+                        return;
+                    }
+
+                    let base_name: SharedString = default_name.into();
+                    let base_ref = default_branch.clone();
+                    let rx = this.update(cx, |this, cx| {
+                        let repo = this.active_repository.clone();
+                        repo.map(|repo| {
+                            repo.update(cx, |repo, _cx| {
+                                repo.diff_name_status(base_ref.to_string())
+                            })
+                        })
+                    });
+                    if let Ok(Some(rx)) = rx {
+                        if let Ok(Ok(files)) = rx.await {
+                            this.update(cx, |this, cx| {
+                                this.base_branch = Some(base_name);
+                                this.compared_files = files;
+                                this.rebuild_entries(cx);
+                            }).ok();
+                        }
+                    }
+                }
+            }).detach();
         }
     }
 
@@ -996,6 +1070,168 @@ impl VsGitPanel {
         .track_scroll(&self.history_scroll_handle)
     }
 
+    fn render_compared_section(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let base_branch = self.base_branch.clone().unwrap_or("?".into());
+        let file_count = self.compared_files.len();
+        let collapsed = self.compared_collapsed;
+
+        v_flex()
+            .w_full()
+            .child(
+                h_flex()
+                    .id("compared-header")
+                    .w_full()
+                    .px_2()
+                    .py_0p5()
+                    .gap_1()
+                    .bg(cx.theme().colors().surface_background)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.compared_collapsed = !this.compared_collapsed;
+                        cx.notify();
+                    }))
+                    .child(
+                        Icon::new(if collapsed {
+                            IconName::ChevronRight
+                        } else {
+                            IconName::ChevronDown
+                        })
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .flex_grow()
+                            .child(
+                                Label::new(format!("Compared to {}", base_branch))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .weight(gpui::FontWeight::BOLD),
+                            )
+                            .child(
+                                Label::new(format!("({} files)", file_count))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+            )
+            .when(!collapsed, |el| {
+                let file_elements: Vec<_> = self.compared_files.iter().enumerate().map(|(ix, (path, status))| {
+                    self.render_compared_file_entry(ix, path.clone(), *status, cx).into_any_element()
+                }).collect();
+                el.children(file_elements)
+            })
+    }
+
+    fn render_compared_file_entry(
+        &self,
+        ix: usize,
+        path: RepoPath,
+        status: CommitFileStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let path_ref: &std::sync::Arc<util::rel_path::RelPath> = path.as_ref();
+        let filename = path_ref.file_name().unwrap_or("").to_string();
+        let parent = path_ref
+            .parent()
+            .map(|p: &util::rel_path::RelPath| {
+                p.display(util::paths::PathStyle::Posix).to_string()
+            })
+            .filter(|p: &String| !p.is_empty());
+
+        let (status_letter, status_color) = match status {
+            CommitFileStatus::Added => ("A", Color::Created),
+            CommitFileStatus::Modified => ("M", Color::Modified),
+            CommitFileStatus::Deleted => ("D", Color::Deleted),
+        };
+
+        let base_branch = self.base_branch.clone().unwrap_or("main".into());
+
+        h_flex()
+            .id(ElementId::NamedInteger("compared-file".into(), ix as u64))
+            .w_full()
+            .pl(px(20.))
+            .pr_2()
+            .py_0p5()
+            .gap_1()
+            .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+            .cursor_pointer()
+            .on_click({
+                let click_path = path.clone();
+                let click_base = base_branch.clone();
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.open_compared_file_diff(click_base.clone(), click_path.clone(), window, cx);
+                })
+            })
+            .child(
+                h_flex()
+                    .gap_1()
+                    .flex_grow()
+                    .overflow_x_hidden()
+                    .child(
+                        Label::new(filename)
+                            .size(LabelSize::Small)
+                            .color(Color::Default),
+                    )
+                    .children(parent.map(|p| {
+                        Label::new(p).size(LabelSize::Small).color(Color::Muted)
+                    })),
+            )
+            .child(
+                Label::new(status_letter)
+                    .size(LabelSize::Small)
+                    .color(status_color),
+            )
+    }
+
+    fn open_compared_file_diff(
+        &mut self,
+        base_ref: SharedString,
+        path: RepoPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        let filename: SharedString = path.as_ref().file_name().unwrap_or("").to_string().into();
+        let base_display: SharedString = base_ref.split('/').last()
+            .unwrap_or(base_ref.as_ref()).to_string().into();
+
+        let rx = repo.update(cx, |repo, _cx| {
+            repo.diff_file_text(base_ref.to_string(), path)
+        });
+
+        cx.spawn_in(window, async move |this, cx| {
+            if let Ok(Ok((old_text, new_text))) = rx.await {
+                this.update_in(cx, |_this, window, cx| {
+                    let diff_view = cx.new(|cx| {
+                        crate::vs_commit_diff_view::VsCommitDiffView::new(
+                            old_text,
+                            new_text,
+                            filename,
+                            base_display,
+                            window,
+                            cx,
+                        )
+                    });
+                    if let Some(workspace) = workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            let pane = workspace.active_pane();
+                            pane.update(cx, |pane, cx| {
+                                pane.add_item(Box::new(diff_view), true, true, None, window, cx);
+                            });
+                        });
+                    }
+                }).ok();
+            }
+        })
+        .detach();
+    }
+
     fn render_history_header_standalone(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let count = self.commit_entries.len();
         let collapsed = self.history_collapsed;
@@ -1378,6 +1614,8 @@ impl Render for VsGitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_status = !self.status_entries.is_empty();
         let has_history = !self.history_entries.is_empty();
+        let has_compared = !self.compared_files.is_empty();
+        let has_bottom_section = has_history || has_compared;
         let border_color = cx.theme().colors().border_variant;
 
         v_flex()
@@ -1398,7 +1636,7 @@ impl Render for VsGitPanel {
             .when(has_status, |el| {
                 el.child(self.render_entries(window, cx))
             })
-            .when(!has_status && !has_history, |el| {
+            .when(!has_status && !has_bottom_section, |el| {
                 el.child(self.render_empty_state(cx))
             })
             .on_drag_move::<DraggedHistoryHandle>(
@@ -1413,7 +1651,7 @@ impl Render for VsGitPanel {
                     }
                 }),
             )
-            .when(has_history, |el| {
+            .when(has_bottom_section, |el| {
                 let history_collapsed = self.history_collapsed;
                 let history_height = self.history_height;
                 el.child(
@@ -1422,11 +1660,11 @@ impl Render for VsGitPanel {
                         .bottom_0()
                         .left_0()
                         .w_full()
-                        .when(history_collapsed, |el| el)
-                        .when(!history_collapsed, |el| el.h(relative(history_height)))
+                        .when(history_collapsed && !has_compared, |el| el)
+                        .when(!history_collapsed || has_compared, |el| el.h(relative(history_height)))
                         .bg(cx.theme().colors().panel_background)
                         // Drag handle border (only when expanded)
-                        .when(!history_collapsed, |el| {
+                        .when(!history_collapsed || has_compared, |el| {
                             el.child(
                                 div()
                                     .id("history-resize-handle")
@@ -1438,10 +1676,16 @@ impl Render for VsGitPanel {
                                     .hover(|style| style.bg(cx.theme().colors().border))
                             )
                         })
-                        // Header
-                        .child(self.render_history_header_standalone(cx))
-                        // Scrollable content (hidden when collapsed)
-                        .when(!history_collapsed, |el| {
+                        // Compared to section
+                        .when(has_compared, |el| {
+                            el.child(self.render_compared_section(window, cx))
+                        })
+                        // History header
+                        .when(has_history, |el| {
+                            el.child(self.render_history_header_standalone(cx))
+                        })
+                        // History content (hidden when collapsed)
+                        .when(has_history && !history_collapsed, |el| {
                             el.child(
                                 v_flex()
                                     .flex_grow()

@@ -739,6 +739,21 @@ impl GitRepository for FakeGitRepository {
         async move { Ok(Vec::new()) }.boxed()
     }
 
+    fn diff_name_status(
+        &self,
+        _base_ref: &str,
+    ) -> BoxFuture<'_, Result<Vec<(git::repository::RepoPath, git::repository::CommitFileStatus)>>> {
+        async move { Ok(Vec::new()) }.boxed()
+    }
+
+    fn diff_file_text(
+        &self,
+        _ref_name: &str,
+        _path: &git::repository::RepoPath,
+    ) -> BoxFuture<'_, Result<(String, String)>> {
+        async move { Ok((String::new(), String::new())) }.boxed()
+    }
+
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,
