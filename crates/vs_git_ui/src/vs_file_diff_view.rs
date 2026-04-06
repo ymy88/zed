@@ -1,6 +1,6 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, MultiBuffer};
+use editor::{Bias, Editor, EditorEvent, MultiBuffer};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
     IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription, Task,
@@ -571,8 +571,11 @@ impl Render for VsFileDiffView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let border_color = cx.theme().colors().border_variant;
 
-        // Compute icon positions from RHS scroll position
+        // Compute icon positions from RHS scroll position (in display rows, accounting for blocks)
         let line_height = _window.line_height();
+        let display_snapshot = self.rhs_editor.update(cx, |editor, cx| {
+            editor.display_snapshot(cx)
+        });
         let scroll_position = self.rhs_editor.update(cx, |editor, cx| {
             editor.scroll_position(cx)
         });
@@ -580,7 +583,13 @@ impl Render for VsFileDiffView {
 
         let mut divider_icons: Vec<AnyElement> = Vec::new();
         for info in &self.hunk_icons {
-            let top = line_height * info.rhs_start_row as f32 - scroll_top;
+            // Convert buffer row to display row (accounts for spacer blocks)
+            let display_point = display_snapshot.point_to_display_point(
+                multi_buffer::MultiBufferPoint::new(info.rhs_start_row, 0),
+                Bias::Left,
+            );
+            let display_row = display_point.row().0 as f32;
+            let top = line_height * display_row - scroll_top;
             let hunk_height_total = line_height * info.hunk_height as f32;
 
             let rhs_editor = info.rhs_editor.clone();
