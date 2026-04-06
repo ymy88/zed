@@ -30,6 +30,27 @@ Zed's built-in Git panel groups files by "tracked" vs "untracked" and opens a si
 
 - **No diff highlighting on the left side** — The LHS editor shows the old content but does not highlight changed/deleted lines with background colors. Only the RHS has diff decorations.
 
+### Building
+
+This fork uses the **nightly** release channel because the nightly icon looks great.
+
+First, install `cargo-bundle`:
+```
+cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+```
+
+Then build and bundle the app:
+```
+script/bundle-mac -o
+```
+
+This creates a release build and opens the bundled `Zed Nightly.app`. The DMG is at `target/aarch64-apple-darwin/release/Zed-aarch64.dmg`.
+
+For a faster debug build (uses existing compilation artifacts):
+```
+script/bundle-mac -do
+```
+
 ### Key Crate
 
 All new code lives in `crates/vs_git_ui/` with three main files:
