@@ -11,7 +11,7 @@ use gpui::{
 use gpui_util::ResultExt as _;
 use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent},
-    Project,
+    Project, ProjectPath,
 };
 use ui::{prelude::*, Color, ContextMenu, DropdownMenu, DropdownStyle, Icon, IconButton, IconName, IconSize, Label, LabelCommon, Tooltip};
 use workspace::{
@@ -455,6 +455,66 @@ impl VsGitPanel {
             .unwrap_or_else(|| "No branch".into())
     }
 
+    fn find_existing_file_diff(
+        &self,
+        project_path: &ProjectPath,
+        diff_kind: crate::vs_file_diff_view::VsDiffKind,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+        let pane = workspace.read(cx).active_pane().clone();
+        let found = pane.read(cx).items().enumerate().find(|(_, item)| {
+            if let Some(diff_view) = item.act_as::<crate::vs_file_diff_view::VsFileDiffView>(cx) {
+                let dv = diff_view.read(cx);
+                dv.project_path.as_ref() == Some(project_path) && dv.diff_kind == diff_kind
+            } else {
+                false
+            }
+        }).map(|(ix, _)| ix);
+
+        if let Some(ix) = found {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(ix, true, true, window, cx);
+            });
+            true
+        } else {
+            false
+        }
+    }
+
+    fn find_existing_commit_diff(
+        &self,
+        full_path: &str,
+        sha_short: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+        let pane = workspace.read(cx).active_pane().clone();
+        let found = pane.read(cx).items().enumerate().find(|(_, item)| {
+            if let Some(diff_view) = item.act_as::<crate::vs_commit_diff_view::VsCommitDiffView>(cx) {
+                let dv = diff_view.read(cx);
+                dv.full_path.as_ref() == full_path && dv.sha_short.as_ref() == sha_short
+            } else {
+                false
+            }
+        }).map(|(ix, _)| ix);
+
+        if let Some(ix) = found {
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(ix, true, true, window, cx);
+            });
+            true
+        } else {
+            false
+        }
+    }
+
     fn repo_display_name(&self, cx: &App) -> Option<SharedString> {
         self.active_repository
             .as_ref()
@@ -709,13 +769,17 @@ impl VsGitPanel {
             return;
         }
 
-        let workspace = self.workspace.clone();
-        let project = self.project.clone();
-
+        // Check if this diff is already open
         let diff_kind = match group {
             ChangeGroup::StagedChanges => crate::vs_file_diff_view::VsDiffKind::Staged,
             _ => crate::vs_file_diff_view::VsDiffKind::Unstaged,
         };
+        if self.find_existing_file_diff(&project_path, diff_kind, window, cx) {
+            return;
+        }
+
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
 
         let diff_view_task = crate::vs_file_diff_view::VsFileDiffView::open(
             project_path,
@@ -1075,8 +1139,7 @@ impl VsGitPanel {
         let Some(file) = files.iter().find(|f| f.path == path) else {
             return;
         };
-        let old_text = file.old_text.clone().unwrap_or_default();
-        let new_text = file.new_text.clone().unwrap_or_default();
+        let full_path: SharedString = path.as_unix_str().to_string().into();
         let filename: SharedString = path
             .as_ref()
             .file_name()
@@ -1084,12 +1147,21 @@ impl VsGitPanel {
             .to_string()
             .into();
         let sha_short: SharedString = sha[..7.min(sha.len())].to_string().into();
+
+        // Check if this diff is already open
+        if self.find_existing_commit_diff(&full_path, &sha_short, window, cx) {
+            return;
+        }
+
+        let old_text = file.old_text.clone().unwrap_or_default();
+        let new_text = file.new_text.clone().unwrap_or_default();
         let workspace = self.workspace.clone();
 
         let diff_view = cx.new(|cx| {
             crate::vs_commit_diff_view::VsCommitDiffView::new(
                 old_text,
                 new_text,
+                full_path,
                 filename,
                 sha_short,
                 window,
@@ -1233,11 +1305,17 @@ impl VsGitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        let workspace = self.workspace.clone();
+        let full_path: SharedString = path.as_unix_str().to_string().into();
         let filename: SharedString = path.as_ref().file_name().unwrap_or("").to_string().into();
         let base_display: SharedString = base_ref.split('/').last()
             .unwrap_or(base_ref.as_ref()).to_string().into();
 
+        // Check if this diff is already open
+        if self.find_existing_commit_diff(&full_path, &base_display, window, cx) {
+            return;
+        }
+
+        let workspace = self.workspace.clone();
         let rx = repo.update(cx, |repo, _cx| {
             repo.diff_file_text(base_ref.to_string(), path)
         });
@@ -1249,6 +1327,7 @@ impl VsGitPanel {
                         crate::vs_commit_diff_view::VsCommitDiffView::new(
                             old_text,
                             new_text,
+                            full_path,
                             filename,
                             base_display,
                             window,

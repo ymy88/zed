@@ -43,7 +43,7 @@ pub struct VsFileDiffView {
     pub(crate) rhs_editor: Entity<Editor>,
     _uncommitted_diff: Entity<BufferDiff>,
     unstaged_diff: Entity<BufferDiff>,
-    diff_kind: VsDiffKind,
+    pub(crate) diff_kind: VsDiffKind,
     file_path: Option<SharedString>,
     pub(crate) project_path: Option<ProjectPath>,
     _project: Entity<Project>,

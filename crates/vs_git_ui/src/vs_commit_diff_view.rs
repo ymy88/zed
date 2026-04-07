@@ -17,8 +17,9 @@ use workspace::{
 pub struct VsCommitDiffView {
     lhs_editor: Entity<Editor>,
     rhs_editor: Entity<Editor>,
+    pub(crate) full_path: SharedString,
     filename: SharedString,
-    sha_short: SharedString,
+    pub(crate) sha_short: SharedString,
     focus_handle: FocusHandle,
     syncing_scroll: bool,
     left_ratio: f32,
@@ -30,6 +31,7 @@ impl VsCommitDiffView {
     pub fn new(
         old_text: String,
         new_text: String,
+        full_path: SharedString,
         filename: SharedString,
         sha_short: SharedString,
         window: &mut Window,
@@ -177,6 +179,7 @@ impl VsCommitDiffView {
         Self {
             lhs_editor,
             rhs_editor,
+            full_path,
             filename,
             sha_short,
             focus_handle,
