@@ -39,22 +39,31 @@ Zed's built-in Git panel groups files by "tracked" vs "untracked" and opens a si
 
 This fork uses the **nightly** release channel because the nightly icon looks great.
 
-First, install `cargo-bundle`:
+**Prerequisites:**
 ```
 cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+brew install zig
 ```
 
-Then build and bundle the app:
+**Build and install:**
 ```
-script/bundle-mac -o
+script/bundle-mac -i
 ```
 
-This creates a release build and opens the bundled `Zed Nightly.app`. The DMG is at `target/aarch64-apple-darwin/release/Zed-aarch64.dmg`.
+This creates a release build and installs `Zed Nightly.app` to `/Applications`. Use `-o` instead of `-i` to just open the app without installing.
 
 For a faster debug build (uses existing compilation artifacts):
 ```
 script/bundle-mac -do
 ```
+
+### Remote Server (SSH)
+
+When connecting to a remote server via SSH, Zed cross-compiles the remote server binary from source using `zig` and uploads it automatically. This happens on first connection after each new build — subsequent connections reuse the cached binary at `~/.zed_server/` on the remote machine.
+
+This is necessary because our fork adds new RPC messages (for commit history, branch comparison, etc.) that are incompatible with upstream Zed's remote server. The upstream approach of downloading pre-built binaries from Zed's CDN doesn't work for our fork.
+
+The cross-compiled binary is built in release mode (~89MB). First-time compilation takes 5-10 minutes depending on your machine.
 
 ### Key Crate
 

@@ -172,7 +172,7 @@ prompt_store.workspace = true
 proto.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
-remote.workspace = true
+remote = { workspace = true, features = ["build-remote-server-binary"] }
 repl.workspace = true
 reqwest.workspace = true
 reqwest_client.workspace = true

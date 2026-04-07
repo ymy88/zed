@@ -929,7 +929,7 @@ ui_input = { codegen-units = 1 }
 zed_actions = { codegen-units = 1 }
 
 [profile.release]
-debug = "limited"
+debug = 0
 lto = "thin"
 codegen-units = 1
 
