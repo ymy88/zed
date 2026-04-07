@@ -565,6 +565,9 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_compare_checkpoints);
         client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
+        client.add_entity_request_handler(Self::handle_branch_log);
+        client.add_entity_request_handler(Self::handle_diff_name_status);
+        client.add_entity_request_handler(Self::handle_diff_file_text);
         client.add_entity_request_handler(Self::handle_file_history);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
@@ -2766,6 +2769,88 @@ impl GitStore {
         })
     }
 
+    async fn handle_branch_log(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitBranchLog>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitBranchLogResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let entries = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.branch_log(
+                    envelope.payload.skip as usize,
+                    envelope.payload.limit as usize,
+                )
+            })
+            .await??;
+        Ok(proto::GitBranchLogResponse {
+            entries: entries
+                .into_iter()
+                .map(|entry| proto::FileHistoryEntry {
+                    sha: entry.sha.to_string(),
+                    subject: entry.subject.to_string(),
+                    message: entry.message.to_string(),
+                    commit_timestamp: entry.commit_timestamp,
+                    author_name: entry.author_name.to_string(),
+                    author_email: entry.author_email.to_string(),
+                })
+                .collect(),
+        })
+    }
+
+    async fn handle_diff_name_status(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitDiffNameStatus>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitDiffNameStatusResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let entries = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.diff_name_status(envelope.payload.base_ref)
+            })
+            .await??;
+        Ok(proto::GitDiffNameStatusResponse {
+            entries: entries
+                .into_iter()
+                .map(|(path, status)| proto::DiffNameStatusEntry {
+                    path: path.to_proto(),
+                    status: match status {
+                        git::repository::CommitFileStatus::Added => {
+                            proto::DiffFileStatus::Added.into()
+                        }
+                        git::repository::CommitFileStatus::Modified => {
+                            proto::DiffFileStatus::Modified.into()
+                        }
+                        git::repository::CommitFileStatus::Deleted => {
+                            proto::DiffFileStatus::Deleted.into()
+                        }
+                    },
+                })
+                .collect(),
+        })
+    }
+
+    async fn handle_diff_file_text(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitDiffFileText>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitDiffFileTextResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let path = git::repository::RepoPath::from_proto(&envelope.payload.path)?;
+        let (old_text, new_text) = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.diff_file_text(envelope.payload.ref_name, path)
+            })
+            .await??;
+        Ok(proto::GitDiffFileTextResponse { old_text, new_text })
+    }
+
     async fn handle_file_history(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitFileHistory>,
@@ -4713,13 +4798,35 @@ impl Repository {
         skip: usize,
         limit: usize,
     ) -> oneshot::Receiver<Result<Vec<git::repository::FileHistoryEntry>>> {
+        let id = self.id;
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.branch_log(skip, limit).await
                 }
-                RepositoryState::Remote(_) => {
-                    Ok(Vec::new())
+                RepositoryState::Remote(RemoteRepositoryState {
+                    client, project_id, ..
+                }) => {
+                    let response = client
+                        .request(proto::GitBranchLog {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            skip: skip as u64,
+                            limit: limit as u64,
+                        })
+                        .await?;
+                    Ok(response
+                        .entries
+                        .into_iter()
+                        .map(|entry| git::repository::FileHistoryEntry {
+                            sha: entry.sha.into(),
+                            subject: entry.subject.into(),
+                            message: entry.message.into(),
+                            commit_timestamp: entry.commit_timestamp,
+                            author_name: entry.author_name.into(),
+                            author_email: entry.author_email.into(),
+                        })
+                        .collect())
                 }
             }
         })
@@ -4729,12 +4836,36 @@ impl Repository {
         &mut self,
         base_ref: String,
     ) -> oneshot::Receiver<Result<Vec<(git::repository::RepoPath, git::repository::CommitFileStatus)>>> {
+        let id = self.id;
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.diff_name_status(&base_ref).await
                 }
-                RepositoryState::Remote(_) => Ok(Vec::new()),
+                RepositoryState::Remote(RemoteRepositoryState {
+                    client, project_id, ..
+                }) => {
+                    let response = client
+                        .request(proto::GitDiffNameStatus {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            base_ref,
+                        })
+                        .await?;
+                    Ok(response
+                        .entries
+                        .into_iter()
+                        .filter_map(|entry| {
+                            let status = match proto::DiffFileStatus::from_i32(entry.status)? {
+                                proto::DiffFileStatus::Added => git::repository::CommitFileStatus::Added,
+                                proto::DiffFileStatus::Modified => git::repository::CommitFileStatus::Modified,
+                                proto::DiffFileStatus::Deleted => git::repository::CommitFileStatus::Deleted,
+                            };
+                            let path = git::repository::RepoPath::from_proto(&entry.path).ok()?;
+                            Some((path, status))
+                        })
+                        .collect())
+                }
             }
         })
     }
@@ -4744,12 +4875,25 @@ impl Repository {
         ref_name: String,
         path: git::repository::RepoPath,
     ) -> oneshot::Receiver<Result<(String, String)>> {
+        let id = self.id;
         self.send_job(None, move |git_repo, _cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.diff_file_text(&ref_name, &path).await
                 }
-                RepositoryState::Remote(_) => Ok((String::new(), String::new())),
+                RepositoryState::Remote(RemoteRepositoryState {
+                    client, project_id, ..
+                }) => {
+                    let response = client
+                        .request(proto::GitDiffFileText {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            ref_name,
+                            path: path.to_proto(),
+                        })
+                        .await?;
+                    Ok((response.old_text, response.new_text))
+                }
             }
         })
     }

@@ -290,6 +290,50 @@ message CommitFile {
   bool is_binary = 4;
 }
 
+message GitBranchLog {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  uint64 skip = 3;
+  uint64 limit = 4;
+}
+
+message GitBranchLogResponse {
+  repeated FileHistoryEntry entries = 1;
+}
+
+message GitDiffNameStatus {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string base_ref = 3;
+}
+
+message GitDiffNameStatusResponse {
+  repeated DiffNameStatusEntry entries = 1;
+}
+
+message DiffNameStatusEntry {
+  string path = 1;
+  DiffFileStatus status = 2;
+}
+
+enum DiffFileStatus {
+  ADDED = 0;
+  MODIFIED = 1;
+  DELETED = 2;
+}
+
+message GitDiffFileText {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string ref_name = 3;
+  string path = 4;
+}
+
+message GitDiffFileTextResponse {
+  string old_text = 1;
+  string new_text = 2;
+}
+
 message GitReset {
   uint64 project_id = 1;
   reserved 2;

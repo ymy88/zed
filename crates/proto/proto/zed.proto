@@ -474,7 +474,13 @@ message Envelope {
     GitCompareCheckpoints git_compare_checkpoints = 436;
     GitCompareCheckpointsResponse git_compare_checkpoints_response = 437;
     GitDiffCheckpoints git_diff_checkpoints = 438;
-    GitDiffCheckpointsResponse git_diff_checkpoints_response = 439; // current max
+    GitDiffCheckpointsResponse git_diff_checkpoints_response = 439;
+    GitBranchLog git_branch_log = 440;
+    GitBranchLogResponse git_branch_log_response = 441;
+    GitDiffNameStatus git_diff_name_status = 442;
+    GitDiffNameStatusResponse git_diff_name_status_response = 443;
+    GitDiffFileText git_diff_file_text = 444;
+    GitDiffFileTextResponse git_diff_file_text_response = 445; // current max
   }
 
   reserved 87 to 88;
