@@ -13,7 +13,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent},
     Project,
 };
-use ui::{prelude::*, Color, Icon, IconButton, IconName, IconSize, Label, LabelCommon, Tooltip};
+use ui::{prelude::*, Color, ContextMenu, DropdownMenu, DropdownStyle, Icon, IconButton, IconName, IconSize, Label, LabelCommon, Tooltip};
 use workspace::{
     dock::{DockPosition, PanelEvent},
     Panel, Workspace,
@@ -455,6 +455,24 @@ impl VsGitPanel {
             .unwrap_or_else(|| "No branch".into())
     }
 
+    fn repo_display_name(&self, cx: &App) -> Option<SharedString> {
+        self.active_repository
+            .as_ref()
+            .map(|repo| repo.read(cx).display_name())
+    }
+
+    fn all_repositories(&self, cx: &App) -> Vec<(SharedString, Entity<Repository>)> {
+        let git_store = self.project.read(cx).git_store();
+        let repos = git_store.read(cx).repositories();
+        let mut result: Vec<_> = repos
+            .values()
+            .map(|repo| (repo.read(cx).display_name(), repo.clone()))
+            .collect();
+        result.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        result
+    }
+
+
     fn total_changes(&self) -> usize {
         self.staged_count + self.unstaged_count + self.conflict_count
     }
@@ -723,8 +741,12 @@ impl VsGitPanel {
         .detach_and_log_err(cx);
     }
 
-    fn render_branch_indicator(&self, cx: &App) -> impl IntoElement {
+    fn render_branch_indicator(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let branch = self.branch_name(cx);
+        let all_repos = self.all_repositories(cx);
+        let has_multiple_repos = all_repos.len() > 1;
+        let repo_name = self.repo_display_name(cx).unwrap_or("repo".into());
+
         h_flex()
             .w_full()
             .px_2()
@@ -735,6 +757,62 @@ impl VsGitPanel {
                     .size(IconSize::Small)
                     .color(Color::Muted),
             )
+            .when(has_multiple_repos, |el| {
+                let menu = ContextMenu::build(window, cx, {
+                    let all_repos = all_repos.clone();
+                    let active_name = repo_name.clone();
+                    move |mut menu, _window, _cx| {
+                        for (name, repo) in all_repos.iter() {
+                            let name = name.clone();
+                            let repo = repo.clone();
+                            let is_active = name == active_name;
+                            let render_name = name.clone();
+                            menu = menu.custom_entry(
+                                move |_window, _cx| {
+                                    h_flex()
+                                        .gap_1()
+                                        .when(is_active, |el| {
+                                            el.child(
+                                                Icon::new(IconName::Check)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Accent),
+                                            )
+                                        })
+                                        .when(!is_active, |el| {
+                                            el.child(div().w(px(14.)))
+                                        })
+                                        .child(
+                                            Label::new(render_name.clone())
+                                                .size(LabelSize::Small)
+                                                .color(if is_active { Color::Accent } else { Color::Default }),
+                                        )
+                                        .into_any_element()
+                                },
+                                {
+                                    let repo = repo.clone();
+                                    move |_window, cx| {
+                                        repo.update(cx, |repo, cx| {
+                                            repo.set_as_active_repository(cx);
+                                        });
+                                    }
+                                },
+                            );
+                        }
+                        menu
+                    }
+                });
+                el.child(
+                    DropdownMenu::new("repo-selector", repo_name, menu)
+                        .style(DropdownStyle::Ghost)
+                        .trigger_size(ui::ButtonSize::Compact)
+                        .attach(gpui::Corner::BottomLeft)
+                )
+                .child(
+                    Label::new("/")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+            })
             .child(
                 Label::new(branch)
                     .size(LabelSize::Small)
@@ -1547,7 +1625,7 @@ impl Render for VsGitPanel {
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
-            .child(self.render_branch_indicator(cx))
+            .child(self.render_branch_indicator(window, cx))
             .relative()
             .when(has_status, |el| {
                 el.child(self.render_entries(window, cx))
