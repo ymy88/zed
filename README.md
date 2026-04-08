@@ -59,9 +59,13 @@ script/bundle-mac -do
 
 ### Remote Server (SSH)
 
-When connecting to a remote server via SSH, Zed cross-compiles the remote server binary from source using `zig` and uploads it automatically. This happens on first connection after each new build — subsequent connections reuse the cached binary at `~/.zed_server/` on the remote machine.
+When connecting to a remote server via SSH, Zed cross-compiles the remote server binary from source using `zig` and uploads it automatically. The binary is cached at `~/.zed_server/` on the remote machine.
 
-This is necessary because our fork adds new RPC messages (for commit history, branch comparison, etc.) that are incompatible with upstream Zed's remote server. The upstream approach of downloading pre-built binaries from Zed's CDN doesn't work for our fork.
+This is necessary because our fork adds new RPC messages (for commit history, branch comparison, etc.) that are incompatible with upstream Zed's remote server.
+
+**Protocol versioning:** The remote server binary name uses a protocol version from `crates/remote/REMOTE_SERVER_VERSION` instead of the commit hash. This means:
+- **UI-only changes** (panel layout, diff view, etc.) → reuse the cached remote server, no rebuild
+- **Proto/RPC changes** (new messages, modified fields) → bump the version number in `REMOTE_SERVER_VERSION` to trigger a rebuild
 
 The cross-compiled binary is built in release mode (~89MB). First-time compilation takes 5-10 minutes depending on your machine.
 

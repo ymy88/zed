@@ -645,7 +645,13 @@ impl SshRemoteConnection {
     ) -> Result<Arc<RelPath>> {
         let version_str = match release_channel {
             ReleaseChannel::Dev => "build".to_string(),
-            _ => version.to_string(),
+            _ => {
+                // Use protocol version from REMOTE_SERVER_VERSION file instead of
+                // commit hash, so the remote server is only rebuilt when the
+                // protocol actually changes.
+                let proto_version = include_str!("../../REMOTE_SERVER_VERSION").trim();
+                format!("{}-proto{}", version.to_string().split('+').next().unwrap_or("0.0.0"), proto_version)
+            }
         };
         let binary_name = format!(
             "zed-remote-server-{}-{}{}",
