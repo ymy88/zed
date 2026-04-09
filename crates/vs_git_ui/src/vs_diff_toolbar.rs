@@ -1,34 +1,59 @@
 use editor::actions::{GoToHunk, GoToPreviousHunk};
 use gpui::{
-    Action, App, Context, Entity, EventEmitter, Focusable, IntoElement, Render, WeakEntity, Window,
+    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
+    WeakEntity, Window,
 };
 use ui::{IconButton, IconName, IconButtonShape, Tooltip, prelude::*};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle};
 
+use crate::vs_commit_diff_view::VsCommitDiffView;
 use crate::vs_file_diff_view::VsFileDiffView;
 
+enum ActiveDiffView {
+    File(WeakEntity<VsFileDiffView>),
+    Commit(WeakEntity<VsCommitDiffView>),
+}
+
+impl ActiveDiffView {
+    fn rhs_focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+        match self {
+            ActiveDiffView::File(weak) => {
+                let view = weak.upgrade()?;
+                Some(view.read(cx).rhs_editor.focus_handle(cx))
+            }
+            ActiveDiffView::Commit(weak) => {
+                let view = weak.upgrade()?;
+                Some(view.read(cx).rhs_editor().focus_handle(cx))
+            }
+        }
+    }
+
+    fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+        match self {
+            ActiveDiffView::File(weak) => Some(weak.upgrade()?.focus_handle(cx)),
+            ActiveDiffView::Commit(weak) => Some(weak.upgrade()?.focus_handle(cx)),
+        }
+    }
+}
+
 pub struct VsDiffToolbar {
-    diff_view: Option<WeakEntity<VsFileDiffView>>,
+    active_view: Option<ActiveDiffView>,
     workspace: WeakEntity<Workspace>,
 }
 
 impl VsDiffToolbar {
     pub fn new(workspace: WeakEntity<Workspace>) -> Self {
         Self {
-            diff_view: None,
+            active_view: None,
             workspace,
         }
     }
 
-    fn diff_view(&self, _cx: &App) -> Option<Entity<VsFileDiffView>> {
-        self.diff_view.as_ref()?.upgrade()
-    }
-
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(diff_view) = self.diff_view(cx) {
-            // Focus the RHS editor so actions like GoToHunk reach it
-            let rhs_focus = diff_view.read(cx).rhs_editor.focus_handle(cx);
-            rhs_focus.focus(window, cx);
+        if let Some(active_view) = &self.active_view {
+            if let Some(rhs_focus) = active_view.rhs_focus_handle(cx) {
+                rhs_focus.focus(window, cx);
+            }
         }
         let action = action.boxed_clone();
         cx.defer(move |cx| {
@@ -46,10 +71,16 @@ impl ToolbarItemView for VsDiffToolbar {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.diff_view = active_pane_item
-            .and_then(|item| item.act_as::<VsFileDiffView>(cx))
-            .map(|entity| entity.downgrade());
-        if self.diff_view.is_some() {
+        self.active_view = active_pane_item.and_then(|item| {
+            if let Some(file_view) = item.act_as::<VsFileDiffView>(cx) {
+                Some(ActiveDiffView::File(file_view.downgrade()))
+            } else if let Some(commit_view) = item.act_as::<VsCommitDiffView>(cx) {
+                Some(ActiveDiffView::Commit(commit_view.downgrade()))
+            } else {
+                None
+            }
+        });
+        if self.active_view.is_some() {
             ToolbarItemLocation::PrimaryRight
         } else {
             ToolbarItemLocation::Hidden
@@ -59,33 +90,38 @@ impl ToolbarItemView for VsDiffToolbar {
 
 impl Render for VsDiffToolbar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(diff_view) = self.diff_view(cx) else {
+        let Some(active_view) = &self.active_view else {
             return div().into_any_element();
         };
-        let focus_handle = diff_view.focus_handle(cx);
+        let Some(focus_handle) = active_view.focus_handle(cx) else {
+            return div().into_any_element();
+        };
 
-        let workspace = self.workspace.clone();
-        let diff_view_for_open = diff_view.downgrade();
+        let mut toolbar = h_flex().gap_1();
 
-        h_flex()
-            .gap_1()
-            .child(
-                IconButton::new("open-file", IconName::File)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(Tooltip::text("Open File"))
-                    .on_click(move |_, window, cx| {
-                        if let Some(diff_view) = diff_view_for_open.upgrade() {
-                            let project_path = diff_view.read(cx).project_path.clone();
-                            // Get current scroll position to restore after opening
-                            let scroll_row = diff_view.update(cx, |dv, cx| {
-                                dv.rhs_editor.update(cx, |editor, cx| {
-                                    editor.scroll_position(cx).y as u32
-                                })
-                            });
-
-                            if let (Some(project_path), Some(workspace)) = (project_path, workspace.upgrade()) {
+        // "Open File" button
+        {
+            let project_path = match active_view {
+                ActiveDiffView::File(weak) => weak.upgrade().and_then(|v| v.read(cx).project_path.clone()),
+                ActiveDiffView::Commit(weak) => weak.upgrade().and_then(|v| v.read(cx).project_path.clone()),
+            };
+            if let Some(project_path) = project_path {
+                let workspace = self.workspace.clone();
+                let rhs_editor = match active_view {
+                    ActiveDiffView::File(weak) => weak.upgrade().map(|v| v.read(cx).rhs_editor.clone()),
+                    ActiveDiffView::Commit(weak) => weak.upgrade().map(|v| v.read(cx).rhs_editor().clone()),
+                };
+                toolbar = toolbar.child(
+                    IconButton::new("open-file", IconName::File)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(Tooltip::text("Open File"))
+                        .on_click(move |_, window, cx| {
+                            let scroll_row = rhs_editor.as_ref().map(|e| {
+                                e.update(cx, |editor, cx| editor.scroll_position(cx).y as u32)
+                            }).unwrap_or(0);
+                            if let Some(workspace) = workspace.upgrade() {
                                 let task = workspace.update(cx, |workspace, cx| {
-                                    workspace.open_path_preview(project_path, None, true, false, true, window, cx)
+                                    workspace.open_path_preview(project_path.clone(), None, true, false, true, window, cx)
                                 });
                                 window.spawn(cx, async move |cx| {
                                     let item = task.await?;
@@ -98,9 +134,12 @@ impl Render for VsDiffToolbar {
                                     anyhow::Ok(())
                                 }).detach_and_log_err(cx);
                             }
-                        }
-                    }),
-            )
+                        }),
+                );
+            }
+        }
+
+        toolbar
             .child(
                 IconButton::new("prev-hunk", IconName::ArrowUp)
                     .shape(IconButtonShape::Square)

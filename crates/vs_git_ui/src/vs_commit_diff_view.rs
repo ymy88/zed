@@ -5,6 +5,7 @@ use gpui::{
     SharedString, Styled as _, Subscription, Task, Window,
 };
 use language::HighlightedText;
+use project::ProjectPath;
 use std::any::TypeId;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -20,6 +21,7 @@ pub struct VsCommitDiffView {
     pub(crate) full_path: SharedString,
     filename: SharedString,
     pub(crate) sha_short: SharedString,
+    pub(crate) project_path: Option<ProjectPath>,
     focus_handle: FocusHandle,
     syncing_scroll: bool,
     left_ratio: f32,
@@ -34,6 +36,7 @@ impl VsCommitDiffView {
         full_path: SharedString,
         filename: SharedString,
         sha_short: SharedString,
+        project_path: Option<ProjectPath>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -182,12 +185,17 @@ impl VsCommitDiffView {
             full_path,
             filename,
             sha_short,
+            project_path,
             focus_handle,
             syncing_scroll: false,
             left_ratio: 0.5,
             _subscriptions: subscriptions,
             _setup_task: setup_task,
         }
+    }
+
+    pub fn rhs_editor(&self) -> &Entity<Editor> {
+        &self.rhs_editor
     }
 }
 
@@ -449,7 +457,7 @@ impl Item for VsCommitDiffView {
     fn breadcrumbs(&self, _cx: &App) -> Option<(Vec<HighlightedText>, Option<gpui::Font>)> {
         Some((
             vec![HighlightedText {
-                text: format!("{} @ {}", self.filename, self.sha_short).into(),
+                text: format!("{} @ {}", self.full_path, self.sha_short).into(),
                 highlights: Vec::new(),
             }],
             None,

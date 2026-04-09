@@ -1156,6 +1156,8 @@ impl VsGitPanel {
         let old_text = file.old_text.clone().unwrap_or_default();
         let new_text = file.new_text.clone().unwrap_or_default();
         let workspace = self.workspace.clone();
+        let project_path = self.active_repository.as_ref()
+            .and_then(|repo| repo.read(cx).repo_path_to_project_path(&path, cx));
 
         let diff_view = cx.new(|cx| {
             crate::vs_commit_diff_view::VsCommitDiffView::new(
@@ -1164,6 +1166,7 @@ impl VsGitPanel {
                 full_path,
                 filename,
                 sha_short,
+                project_path,
                 window,
                 cx,
             )
@@ -1316,6 +1319,7 @@ impl VsGitPanel {
         }
 
         let workspace = self.workspace.clone();
+        let project_path = repo.read(cx).repo_path_to_project_path(&path, cx);
         let rx = repo.update(cx, |repo, _cx| {
             repo.diff_file_text(base_ref.to_string(), path)
         });
@@ -1330,6 +1334,7 @@ impl VsGitPanel {
                             full_path,
                             filename,
                             base_display,
+                            project_path,
                             window,
                             cx,
                         )
