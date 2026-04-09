@@ -209,6 +209,7 @@ fn insert_alignment_blocks(
     let mut rhs_blocks = Vec::new();
     let mut lhs_blocks = Vec::new();
     let mut lhs_extra_offset: i64 = 0;
+    let mut lhs_highlight_ranges: Vec<std::ops::Range<multi_buffer::Anchor>> = Vec::new();
 
     for hunk in &hunks {
         let rhs_lines = (hunk.row_range.end.0 as i64) - (hunk.row_range.start.0 as i64);
@@ -245,6 +246,20 @@ fn insert_alignment_blocks(
         };
 
         let line_diff = rhs_lines - lhs_lines;
+
+        // Highlight LHS rows that correspond to deleted/modified lines
+        if lhs_lines > 0 {
+            let lhs_start_row = (hunk.row_range.start.0 as i64 - lhs_extra_offset).max(0) as u32;
+            let lhs_end_row = (lhs_start_row as i64 + lhs_lines).max(0) as u32;
+            let lhs_end_row = lhs_end_row.min(lhs_snapshot.max_point().row + 1);
+            let start_anchor = lhs_snapshot.anchor_before(
+                multi_buffer::MultiBufferPoint::new(lhs_start_row, 0),
+            );
+            let end_anchor = lhs_snapshot.anchor_before(
+                multi_buffer::MultiBufferPoint::new(lhs_end_row, 0),
+            );
+            lhs_highlight_ranges.push(start_anchor..end_anchor);
+        }
 
         if line_diff > 0 {
             // RHS has more lines → spacer in LHS
@@ -313,6 +328,28 @@ fn insert_alignment_blocks(
     if !lhs_blocks.is_empty() {
         lhs_editor.update(cx, |editor, cx| {
             editor.insert_blocks(lhs_blocks, None, cx);
+        });
+    }
+
+    // Apply LHS row highlights for deleted/modified lines
+    if !lhs_highlight_ranges.is_empty() {
+        struct LhsDiffHighlight;
+        let deleted_color = cx.theme().colors().version_control_deleted;
+        let opacity = if cx.theme().appearance().is_light() { 0.16 } else { 0.12 };
+        let color = deleted_color.opacity(opacity);
+        lhs_editor.update(cx, |editor, cx| {
+            editor.clear_row_highlights::<LhsDiffHighlight>();
+            for range in lhs_highlight_ranges {
+                editor.highlight_rows::<LhsDiffHighlight>(
+                    range,
+                    color,
+                    editor::RowHighlightOptions {
+                        include_gutter: true,
+                        ..Default::default()
+                    },
+                    cx,
+                );
+            }
         });
     }
 }

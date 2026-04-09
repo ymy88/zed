@@ -434,6 +434,7 @@ impl VsFileDiffView {
         let mut rhs_blocks = Vec::new();
         let mut lhs_blocks = Vec::new();
         let mut lhs_extra_offset: i64 = 0;
+        let mut lhs_highlight_ranges: Vec<(std::ops::Range<multi_buffer::Anchor>, u32, u32)> = Vec::new();
 
         for hunk in &hunks {
             let rhs_lines = (hunk.row_range.end.0 as i64) - (hunk.row_range.start.0 as i64);
@@ -475,6 +476,20 @@ impl VsFileDiffView {
 
             let diff = rhs_lines - lhs_lines;
             let hunk_height = rhs_lines.max(lhs_lines) as u32;
+
+            // Highlight LHS rows that correspond to deleted/modified lines
+            if lhs_lines > 0 {
+                let lhs_start_row = (hunk.row_range.start.0 as i64 - lhs_extra_offset).max(0) as u32;
+                let lhs_end_row = (lhs_start_row as i64 + lhs_lines).max(0) as u32;
+                let lhs_end_row = lhs_end_row.min(lhs_snapshot.max_point().row + 1);
+                let start_anchor = lhs_snapshot.anchor_before(
+                    multi_buffer::MultiBufferPoint::new(lhs_start_row, 0),
+                );
+                let end_anchor = lhs_snapshot.anchor_before(
+                    multi_buffer::MultiBufferPoint::new(lhs_end_row, 0),
+                );
+                lhs_highlight_ranges.push((start_anchor..end_anchor, lhs_start_row, lhs_end_row));
+            }
 
             // Store hunk position for divider icon rendering (unstaged only)
             if diff_kind == VsDiffKind::Unstaged {
@@ -559,6 +574,28 @@ impl VsFileDiffView {
         if !lhs_blocks.is_empty() {
             lhs_editor.update(cx, |editor, cx| {
                 lhs_block_ids.extend(editor.insert_blocks(lhs_blocks, None, cx));
+            });
+        }
+
+        // Apply LHS row highlights for deleted/modified lines
+        if !lhs_highlight_ranges.is_empty() {
+            struct LhsDiffHighlight;
+            let deleted_color = cx.theme().colors().version_control_deleted;
+            let opacity = if cx.theme().appearance().is_light() { 0.16 } else { 0.12 };
+            let color = deleted_color.opacity(opacity);
+            lhs_editor.update(cx, |editor, cx| {
+                editor.clear_row_highlights::<LhsDiffHighlight>();
+                for (range, _, _) in lhs_highlight_ranges {
+                    editor.highlight_rows::<LhsDiffHighlight>(
+                        range,
+                        color,
+                        editor::RowHighlightOptions {
+                            include_gutter: true,
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+                }
             });
         }
 
