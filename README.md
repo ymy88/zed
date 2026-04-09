@@ -31,10 +31,6 @@ Zed's built-in Git panel groups files by "tracked" vs "untracked" and opens a si
 - **Proactive diff recalculation** after staging — reduces feedback from ~480ms to ~37ms
 - **Custom logo** (Zed + VS Code) to distinguish this build
 
-### Known Issues
-
-- **No diff highlighting on the left side** — The LHS editor shows the old content but does not highlight changed/deleted lines with background colors. Only the RHS has diff decorations.
-
 ### Building
 
 This fork uses the **nightly** release channel because the nightly icon looks great.
