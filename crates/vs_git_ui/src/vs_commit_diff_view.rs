@@ -15,6 +15,8 @@ use workspace::{
     item::{ItemEvent, TabContentParams},
 };
 
+struct DraggedVsCommitDiffHandle;
+
 pub struct VsCommitDiffView {
     lhs_editor: Entity<Editor>,
     rhs_editor: Entity<Editor>,
@@ -369,7 +371,30 @@ impl Render for VsCommitDiffView {
         let border_color = cx.theme().colors().border_variant;
 
         h_flex()
+            .id("vs-commit-diff-view-container")
             .size_full()
+            .on_drag_move::<DraggedVsCommitDiffHandle>(
+                cx.listener(|this, event: &gpui::DragMoveEvent<DraggedVsCommitDiffHandle>, window, cx| {
+                    let bounds = event.bounds;
+                    let drag_x = event.event.position.x;
+                    let bounds_width = bounds.right() - bounds.left();
+                    if bounds_width > px(0.) {
+                        let new_ratio = ((drag_x - bounds.left()) / bounds_width).clamp(0.1, 0.9);
+                        this.left_ratio = new_ratio;
+                        // Reset horizontal scroll on both editors to prevent drift
+                        this.lhs_editor.update(cx, |editor, cx| {
+                            let mut pos = editor.scroll_position(cx);
+                            pos.x = 0.0.into();
+                            editor.set_scroll_position(pos, window, cx);
+                        });
+                        this.rhs_editor.update(cx, |editor, cx| {
+                            let mut pos = editor.scroll_position(cx);
+                            pos.x = 0.0.into();
+                            editor.set_scroll_position(pos, window, cx);
+                        });
+                    }
+                }),
+            )
             .child(
                 div()
                     .flex_shrink()
@@ -384,7 +409,23 @@ impl Render for VsCommitDiffView {
                     .w(px(1.))
                     .h_full()
                     .flex_shrink_0()
-                    .bg(border_color),
+                    .bg(border_color)
+                    .relative()
+                    .child(
+                        div()
+                            .id("vs-commit-diff-resize-handle")
+                            .absolute()
+                            .left(px(-4.))
+                            .w(px(9.))
+                            .h_full()
+                            .cursor_col_resize()
+                            .on_click(cx.listener(|this, event: &gpui::ClickEvent, _window, _cx| {
+                                if event.click_count() >= 2 {
+                                    this.left_ratio = 0.5;
+                                }
+                            }))
+                            .on_drag(DraggedVsCommitDiffHandle, |_, _, _, cx| cx.new(|_| gpui::Empty))
+                    ),
             )
             .child(
                 div()
