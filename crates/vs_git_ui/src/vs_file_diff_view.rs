@@ -228,7 +228,7 @@ impl VsFileDiffView {
                         }
                     }
                     EditorEvent::DirtyChanged | EditorEvent::Saved => {
-                        this.refresh_alignment_blocks(cx);
+                        this.refresh_alignment_blocks(window, cx);
                     }
                     _ => {}
                 }
@@ -267,11 +267,6 @@ impl VsFileDiffView {
                     let new_index_text = this.unstaged_diff.read(cx)
                         .base_text_buffer().read(cx).text();
 
-                    let rhs_scroll = this.rhs_editor.update(cx, |editor, cx| {
-                        editor.scroll_position(cx)
-                    });
-                    this.syncing_scroll = true;
-
                     this.lhs_editor.update(cx, |editor, cx| {
                         let buffer = editor.buffer().read(cx)
                             .all_buffers().into_iter().next();
@@ -280,11 +275,9 @@ impl VsFileDiffView {
                                 buffer.set_text(new_index_text, cx);
                             });
                         }
-                        editor.set_scroll_position(rhs_scroll, window, cx);
                     });
 
-                    this.syncing_scroll = false;
-                    this.refresh_alignment_blocks(cx);
+                    this.refresh_alignment_blocks(window, cx);
                 }
             },
         ));
@@ -338,7 +331,7 @@ impl VsFileDiffView {
                 // Compute spacer blocks and scroll to first hunk
                 _this
                     .update_in(cx, |this, window, cx| {
-                        this.refresh_alignment_blocks(cx);
+                        this.refresh_alignment_blocks(window, cx);
 
                         // Scroll to first hunk
                         let rhs_snapshot = this.rhs_editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -381,9 +374,12 @@ impl VsFileDiffView {
         }
     }
 
-    fn refresh_alignment_blocks(&mut self, cx: &mut App) {
+    fn refresh_alignment_blocks(&mut self, window: &mut Window, cx: &mut App) {
         let rhs_editor = &self.rhs_editor;
         let lhs_editor = &self.lhs_editor;
+
+        // Save scroll position before modifying blocks
+        let scroll_pos = rhs_editor.update(cx, |editor, cx| editor.scroll_position(cx));
 
         // Remove old blocks
         if !self.rhs_block_ids.is_empty() {
@@ -408,6 +404,16 @@ impl VsFileDiffView {
             self.diff_kind,
             cx,
         );
+
+        // Restore scroll position after blocks are updated
+        self.syncing_scroll = true;
+        rhs_editor.update(cx, |editor, cx| {
+            editor.set_scroll_position(scroll_pos, window, cx);
+        });
+        lhs_editor.update(cx, |editor, cx| {
+            editor.set_scroll_position(scroll_pos, window, cx);
+        });
+        self.syncing_scroll = false;
     }
 
     fn compute_alignment_blocks(
