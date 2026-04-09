@@ -435,6 +435,14 @@ impl Item for VsCommitDiffView {
         Some("VS Commit Diff Opened")
     }
 
+    fn as_searchable(
+        &self,
+        _: &Entity<Self>,
+        _cx: &App,
+    ) -> Option<Box<dyn workspace::searchable::SearchableItemHandle>> {
+        Some(Box::new(self.rhs_editor.clone()))
+    }
+
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,

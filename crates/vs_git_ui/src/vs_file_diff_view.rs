@@ -853,7 +853,7 @@ impl Item for VsFileDiffView {
         _: &Entity<Self>,
         _cx: &App,
     ) -> Option<Box<dyn SearchableItemHandle>> {
-        None
+        Some(Box::new(self.rhs_editor.clone()))
     }
 
     fn for_each_project_item(
