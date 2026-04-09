@@ -24789,7 +24789,7 @@ impl Editor {
                         workspace.active_pane().clone()
                     };
 
-                    for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
+                    for (buffer, (ranges, _scroll_offset)) in new_selections_by_buffer {
                         let buffer_read = buffer.read(cx);
                         let (has_file, is_project_file) = if let Some(file) = buffer_read.file() {
                             (true, project::File::from_dyn(Some(file)).is_some())
@@ -24848,12 +24848,7 @@ impl Editor {
                             if has_file && !is_project_file {
                                 editor.set_read_only(true);
                             }
-                            let autoscroll = match scroll_offset {
-                                Some(scroll_offset) => {
-                                    Autoscroll::top_relative(scroll_offset as usize)
-                                }
-                                None => Autoscroll::newest(),
-                            };
+                            let autoscroll = Autoscroll::center();
                             let nav_history = editor.nav_history.take();
                             let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                             let Some(buffer_snapshot) = multibuffer_snapshot.as_singleton() else {
