@@ -1585,7 +1585,7 @@ impl ProjectSearchView {
                 }
             });
             if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
-                self.focus_results_editor(window, cx);
+                // Keep focus on the search bar so the user can iterate results with shortcuts
             }
         }
 
