@@ -28,7 +28,6 @@ multi_buffer.workspace =  true
 panel.workspace = true
 rope.workspace = true
 project.workspace = true
-recent_projects.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true

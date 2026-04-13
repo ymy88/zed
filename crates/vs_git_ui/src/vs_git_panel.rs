@@ -110,7 +110,6 @@ pub struct VsGitPanel {
     compared_collapsed: bool,
     has_more_commits: bool,
     load_history_task: Task<()>,
-    git_worktrees: Vec<git::repository::Worktree>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -170,12 +169,10 @@ impl VsGitPanel {
                 compared_collapsed: false,
                 has_more_commits: true,
                 load_history_task: Task::ready(()),
-                git_worktrees: Vec::new(),
                 _subscriptions: vec![subscription],
             };
 
             this.schedule_update(window, cx);
-            this.load_worktrees(cx);
             this
         })
     }
@@ -193,26 +190,6 @@ impl VsGitPanel {
 
         self.load_history(0, window, cx);
         self.load_compared_files(window, cx);
-        self.load_worktrees(cx);
-    }
-
-    fn load_worktrees(&mut self, cx: &mut Context<Self>) {
-        let Some(repo) = self.active_repository.clone() else {
-            self.git_worktrees.clear();
-            return;
-        };
-        let rx = repo.update(cx, |repo, _| repo.worktrees());
-        cx.spawn(async move |this, cx| {
-            if let Ok(Ok(worktrees)) = rx.await {
-                this.update(cx, |this, cx| {
-                    this.git_worktrees = worktrees
-                        .into_iter()
-                        .filter(|wt| wt.ref_name.is_some())
-                        .collect();
-                    cx.notify();
-                }).ok();
-            }
-        }).detach();
     }
 
     fn load_compared_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -833,7 +810,6 @@ impl VsGitPanel {
         let all_repos = self.all_repositories(cx);
         let has_multiple_repos = all_repos.len() > 1;
         let repo_name = self.repo_display_name(cx).unwrap_or("repo".into());
-        let has_worktrees = self.git_worktrees.len() > 1;
 
         h_flex()
             .w_full()
@@ -901,106 +877,11 @@ impl VsGitPanel {
                         .color(Color::Muted),
                 )
             })
-            .when(has_worktrees, |el| {
-                let worktrees = self.git_worktrees.clone();
-                let current_branch = branch.clone();
-                let workspace = self.workspace.clone();
-                let menu = ContextMenu::build(window, cx, {
-                    move |mut menu, _window, _cx| {
-                        for wt in worktrees.iter() {
-                            let ref_name: SharedString = wt.ref_name.clone()
-                                .unwrap_or_else(|| "(detached)".into());
-                            let is_current = ref_name == current_branch;
-                            let display_name = ref_name.clone();
-                            let wt_path = wt.path.clone();
-                            let workspace = workspace.clone();
-                            menu = menu.custom_entry(
-                                move |_window, _cx| {
-                                    h_flex()
-                                        .gap_1()
-                                        .when(is_current, |el| {
-                                            el.child(
-                                                Icon::new(IconName::Check)
-                                                    .size(IconSize::XSmall)
-                                                    .color(Color::Accent),
-                                            )
-                                        })
-                                        .when(!is_current, |el| {
-                                            el.child(div().w(px(14.)))
-                                        })
-                                        .child(
-                                            Label::new(display_name.clone())
-                                                .size(LabelSize::Small)
-                                                .color(if is_current { Color::Accent } else { Color::Default }),
-                                        )
-                                        .into_any_element()
-                                },
-                                {
-                                    let wt_path = wt_path.clone();
-                                    let workspace = workspace.clone();
-                                    move |window, cx| {
-                                        if let Some(workspace) = workspace.upgrade() {
-                                            let is_local = workspace.update(cx, |workspace, cx| {
-                                                workspace.project().read(cx).is_local()
-                                            });
-                                            if is_local {
-                                                let open_task = workspace.update(cx, |workspace, cx| {
-                                                    workspace.open_workspace_for_paths(
-                                                        workspace::OpenMode::NewWindow,
-                                                        vec![wt_path.clone()],
-                                                        window,
-                                                        cx,
-                                                    )
-                                                });
-                                                window.spawn(cx, async move |_cx| {
-                                                    open_task.await?;
-                                                    anyhow::Ok(())
-                                                }).detach_and_log_err(cx);
-                                            } else {
-                                                let connection_and_state = workspace.update(cx, |workspace, cx| {
-                                                    let connection_options = workspace.project().read(cx).remote_connection_options(cx);
-                                                    let app_state = workspace.app_state().clone();
-                                                    (connection_options, app_state)
-                                                });
-                                                if let Some(connection_options) = connection_and_state.0 {
-                                                    let app_state = connection_and_state.1;
-                                                    let wt_path = wt_path.clone();
-                                                    window.spawn(cx, async move |mut cx| {
-                                                        recent_projects::open_remote_project(
-                                                            connection_options,
-                                                            vec![wt_path],
-                                                            app_state,
-                                                            workspace::OpenOptions {
-                                                                open_mode: workspace::OpenMode::NewWindow,
-                                                                ..Default::default()
-                                                            },
-                                                            &mut cx,
-                                                        ).await
-                                                    }).detach_and_log_err(cx);
-                                                }
-                                            }
-                                        }
-                                    }
-                                },
-                            );
-                        }
-                        menu
-                    }
-                });
-                el.child(
-                    DropdownMenu::new("worktree-selector", branch.clone(), menu)
-                        .style(DropdownStyle::Ghost)
-                        .trigger_size(ui::ButtonSize::Compact)
-                        .attach(gpui::Corner::BottomLeft)
-                )
-            })
-            .when(!has_worktrees, |el| {
-                el.child(
-                    Label::new(branch)
-                        .size(LabelSize::Small)
-                        .color(Color::Default),
-                )
-            })
+            .child(
+                Label::new(branch)
+                    .size(LabelSize::Small)
+                    .color(Color::Default),
+            )
     }
 
     fn render_entries(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
