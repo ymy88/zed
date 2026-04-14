@@ -616,8 +616,10 @@ impl Render for VsFileDiffView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let border_color = cx.theme().colors().border_variant;
 
-        // Compute icon positions from RHS scroll position (in display rows, accounting for blocks)
-        let line_height = _window.line_height();
+        // Use the editor's line height (based on buffer font), not the window's UI line height
+        let line_height = self.rhs_editor.update(cx, |editor, cx| {
+            editor.style(cx).text.line_height_in_pixels(_window.rem_size())
+        });
         let display_snapshot = self.rhs_editor.update(cx, |editor, cx| {
             editor.display_snapshot(cx)
         });
@@ -656,15 +658,35 @@ impl Render for VsFileDiffView {
                             .items_center()
                             .justify_center()
                             .h_full()
-                            .gap_0p5()
+                            .gap_0()
+                            .child(
+                                gpui::div()
+                                    .id(("restore-mid", hunk_row as u64))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.7, 0.5)).rounded_md())
+                                    .rounded_sm()
+                                    .tooltip(ui::Tooltip::text("Revert Change"))
+                                    .child(ui::Icon::new(ui::IconName::ArrowRight).size(ui::IconSize::Medium))
+                                    .on_click({
+                                        let rhs_editor = rhs_editor.clone();
+                                        move |_event, window, cx| {
+                                            rhs_editor.update(cx, |editor, cx| {
+                                                let point = rope::Point::new(hunk_row, 0);
+                                                editor.restore_hunks_in_ranges(
+                                                    vec![point..point], window, cx,
+                                                );
+                                            });
+                                        }
+                                    })
+                            )
                             .child(
                                 gpui::div()
                                     .id(("stage-mid", hunk_row as u64))
                                     .cursor_pointer()
-                                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.5, 0.2)))
+                                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.7, 0.5)).rounded_md())
                                     .rounded_sm()
-                                    .p_0p5()
-                                    .child(ui::Icon::new(ui::IconName::Plus).size(ui::IconSize::XSmall))
+                                    .tooltip(ui::Tooltip::text("Stage Change"))
+                                    .child(ui::Icon::new(ui::IconName::Plus).size(ui::IconSize::Medium))
                                     .on_click({
                                         let rhs_editor = rhs_editor.clone();
                                         let uncommitted_diff = uncommitted_diff.clone();
@@ -691,26 +713,6 @@ impl Render for VsFileDiffView {
                                                     });
                                                 }
                                             }
-                                        }
-                                    })
-                            )
-                            .child(
-                                gpui::div()
-                                    .id(("restore-mid", hunk_row as u64))
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(gpui::hsla(0.0, 0.0, 0.5, 0.2)))
-                                    .rounded_sm()
-                                    .p_0p5()
-                                    .child(ui::Icon::new(ui::IconName::ArrowRight).size(ui::IconSize::XSmall))
-                                    .on_click({
-                                        let rhs_editor = rhs_editor.clone();
-                                        move |_event, window, cx| {
-                                            rhs_editor.update(cx, |editor, cx| {
-                                                let point = rope::Point::new(hunk_row, 0);
-                                                editor.restore_hunks_in_ranges(
-                                                    vec![point..point], window, cx,
-                                                );
-                                            });
                                         }
                                     })
                             )
