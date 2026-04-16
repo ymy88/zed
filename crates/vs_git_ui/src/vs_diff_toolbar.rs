@@ -1,6 +1,6 @@
 use editor::actions::{GoToHunk, GoToPreviousHunk};
 use gpui::{
-    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
+    Action, App, Context, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
     WeakEntity, Window,
 };
 use ui::{IconButton, IconName, IconButtonShape, Tooltip, prelude::*};

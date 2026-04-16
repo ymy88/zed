@@ -3256,6 +3256,10 @@ impl Editor {
         self.workspace.as_ref()?.0.upgrade()
     }
 
+    pub fn set_workspace(&mut self, workspace: WeakEntity<Workspace>) {
+        self.workspace = Some((workspace, None));
+    }
+
     /// Detaches a task and shows an error notification in the workspace if available,
     /// otherwise just logs the error.
     pub fn detach_and_notify_err<R, E>(

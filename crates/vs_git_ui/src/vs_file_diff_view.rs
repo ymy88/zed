@@ -991,12 +991,18 @@ impl Item for VsFileDiffView {
 
     fn added_to_workspace(
         &mut self,
-        _workspace: &mut Workspace,
+        workspace: &mut Workspace,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        // Do NOT forward to rhs_editor — it would set a workspace serialization ID
-        // on the inner editor, causing FOREIGN KEY errors when persisting selections
-        // (the inner editor is not a registered workspace item).
+        // Set workspace reference without a database ID to enable navigation
+        // (e.g. Go to Definition) while avoiding FOREIGN KEY errors from
+        // persisting selections on inner editors that aren't workspace items.
+        if self.diff_kind == VsDiffKind::Unstaged {
+            let weak_workspace = workspace.weak_handle();
+            self.rhs_editor.update(cx, |editor, _cx| {
+                editor.set_workspace(weak_workspace);
+            });
+        }
     }
 }
