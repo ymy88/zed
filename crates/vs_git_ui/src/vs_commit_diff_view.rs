@@ -5,7 +5,7 @@ use gpui::{
     SharedString, Styled as _, Subscription, Task, Window,
 };
 use language::HighlightedText;
-use project::ProjectPath;
+use project::{Project, ProjectPath};
 use std::any::TypeId;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -24,6 +24,7 @@ pub struct VsCommitDiffView {
     filename: SharedString,
     pub(crate) sha_short: SharedString,
     pub(crate) project_path: Option<ProjectPath>,
+    project: Option<Entity<Project>>,
     focus_handle: FocusHandle,
     syncing_scroll: bool,
     left_ratio: f32,
@@ -39,6 +40,7 @@ impl VsCommitDiffView {
         filename: SharedString,
         sha_short: SharedString,
         project_path: Option<ProjectPath>,
+        project: Option<Entity<Project>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -123,11 +125,40 @@ impl VsCommitDiffView {
             },
         ));
 
-        // Setup: create diff, attach to RHS, compute alignment blocks
+        // Setup: detect language, create diff, attach to RHS, compute alignment blocks
         let setup_task = cx.spawn_in(window, {
             let rhs_editor = rhs_editor.clone();
             let lhs_editor = lhs_editor.clone();
+            let detect_path = full_path.clone();
             async move |_this, cx| {
+                // Detect language from file path and apply to both editors
+                let path = std::path::Path::new(detect_path.as_ref());
+                let language_registry: Option<std::sync::Arc<language::LanguageRegistry>> = _this.update(cx, |this: &mut VsCommitDiffView, cx| {
+                    this.project.as_ref().map(|p| p.read(cx).languages().clone())
+                }).ok().flatten();
+                let language = if let Some(registry) = language_registry {
+                    registry.load_language_for_file_path(path).await.ok()
+                } else {
+                    None
+                };
+                if let Some(language) = language
+                {
+                    lhs_editor.update(cx, |editor, cx| {
+                        if let Some(buffer) = editor.buffer().read(cx).all_buffers().into_iter().next() {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.set_language(Some(language.clone()), cx);
+                            });
+                        }
+                    });
+                    rhs_editor.update(cx, |editor, cx| {
+                        if let Some(buffer) = editor.buffer().read(cx).all_buffers().into_iter().next() {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.set_language(Some(language), cx);
+                            });
+                        }
+                    });
+                }
+
                 // Create and attach diff
                 let rhs_buffer = rhs_editor.update(cx, |editor, cx| {
                     editor.buffer().read(cx).all_buffers().into_iter().next()
@@ -188,6 +219,7 @@ impl VsCommitDiffView {
             filename,
             sha_short,
             project_path,
+            project,
             focus_handle,
             syncing_scroll: false,
             left_ratio: 0.5,

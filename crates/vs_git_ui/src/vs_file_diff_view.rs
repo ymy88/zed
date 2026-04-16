@@ -283,11 +283,42 @@ impl VsFileDiffView {
         ));
         } // end if Unstaged
 
-        // Setup task: create diff if needed, then add spacer blocks
+        // Setup task: detect language, create diff if needed, then add spacer blocks
         let setup_task = cx.spawn_in(window, {
             let rhs_editor = rhs_editor.clone();
+            let lhs_editor = lhs_editor.clone();
             let head_text = head_text_for_staged;
+            let project = project.clone();
+            let project_path = project_path.clone();
             async move |_this, cx| {
+                // Detect language from file path and apply to LHS (and RHS for staged)
+                if let Some(ref pp) = project_path {
+                    let language_registry = project.read_with(cx, |project, _| {
+                        project.languages().clone()
+                    });
+                    if let Ok(language) = language_registry
+                        .load_language_for_file_path(&pp.path.as_std_path().to_path_buf())
+                        .await
+                    {
+                        lhs_editor.update(cx, |editor, cx| {
+                            if let Some(buffer) = editor.buffer().read(cx).all_buffers().into_iter().next() {
+                                buffer.update(cx, |buffer, cx| {
+                                    buffer.set_language(Some(language.clone()), cx);
+                                });
+                            }
+                        });
+                        if diff_kind == VsDiffKind::Staged {
+                            rhs_editor.update(cx, |editor, cx| {
+                                if let Some(buffer) = editor.buffer().read(cx).all_buffers().into_iter().next() {
+                                    buffer.update(cx, |buffer, cx| {
+                                        buffer.set_language(Some(language), cx);
+                                    });
+                                }
+                            });
+                        }
+                    }
+                }
+
                 match diff_kind {
                     VsDiffKind::Unstaged => {
                         // Wait for RHS diff to be ready
