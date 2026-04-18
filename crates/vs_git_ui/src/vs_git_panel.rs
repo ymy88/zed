@@ -455,6 +455,74 @@ impl VsGitPanel {
             .unwrap_or_else(|| "No branch".into())
     }
 
+    fn open_deleted_file_diff(
+        &mut self,
+        repo_path: RepoPath,
+        group: ChangeGroup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        let full_path: SharedString = repo_path.as_unix_str().to_string().into();
+        let filename: SharedString = repo_path.as_ref().file_name().unwrap_or("").to_string().into();
+        let suffix: SharedString = match group {
+            ChangeGroup::StagedChanges => "(Deleted - Staged)".into(),
+            _ => "(Deleted)".into(),
+        };
+
+        // Check if already open
+        if self.find_existing_commit_diff(&full_path, &suffix, window, cx) {
+            return;
+        }
+
+        // Use diff_file_text to get the old content
+        // For unstaged: base is HEAD (shows index content as old)
+        // For staged: base is HEAD (shows HEAD content as old)
+        let project_path = repo.read(cx).repo_path_to_project_path(&repo_path, cx);
+        let base_ref = "HEAD".to_string();
+        let rx = repo.update(cx, |repo, _cx| {
+            repo.diff_file_text(base_ref, repo_path)
+        });
+
+        let workspace = self.workspace.clone();
+        let project = Some(self.project.clone());
+
+        cx.spawn_in(window, async move |_this, cx| {
+            let old_text = if let Ok(Ok((old, _new))) = rx.await {
+                old
+            } else {
+                String::new()
+            };
+
+            _this.update_in(cx, |_this, window, cx| {
+                let diff_view = cx.new(|cx| {
+                    crate::vs_commit_diff_view::VsCommitDiffView::new(
+                        old_text,
+                        String::new(),
+                        full_path,
+                        filename,
+                        suffix,
+                        project_path,
+                        project,
+                        window,
+                        cx,
+                    )
+                });
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        let pane = workspace.active_pane();
+                        pane.update(cx, |pane, cx| {
+                            pane.add_item(Box::new(diff_view), true, true, None, window, cx);
+                        });
+                    });
+                }
+            }).ok();
+        })
+        .detach();
+    }
+
     fn find_existing_file_diff(
         &self,
         project_path: &ProjectPath,
@@ -766,6 +834,8 @@ impl VsGitPanel {
             return;
         };
         if status.is_deleted() {
+            // For deleted files, show old content vs empty using commit diff view
+            self.open_deleted_file_diff(repo_path, group, window, cx);
             return;
         }
 
