@@ -912,6 +912,11 @@ pub trait GitRepository: Send + Sync {
         include_remote_name: bool,
     ) -> BoxFuture<'_, Result<Option<SharedString>>>;
 
+    fn parent_branch(
+        &self,
+        current_branch: &str,
+    ) -> BoxFuture<'_, Result<Option<SharedString>>>;
+
     /// Runs `git rev-list --parents` to get the commit graph structure.
     /// Returns commit SHAs and their parent SHAs for building the graph visualization.
     fn initial_graph_data(
@@ -2784,6 +2789,74 @@ impl GitRepository for RealGitRepository {
 
                 if git.run(&["rev-parse", "master"]).await.is_ok() {
                     return Ok(Some("master".into()));
+                }
+
+                Ok(None)
+            })
+            .boxed()
+    }
+
+    fn parent_branch(
+        &self,
+        current_branch: &str,
+    ) -> BoxFuture<'_, Result<Option<SharedString>>> {
+        let git_binary = self.git_binary();
+        let current_branch = current_branch.to_string();
+        self.executor
+            .spawn(async move {
+                let git = git_binary?;
+
+                // Walk back from HEAD through decorated commits to find the
+                // first branch ref that isn't the current branch.
+                let output = git
+                    .build_command(&[
+                        "log",
+                        "--decorate=full",
+                        "--simplify-by-decoration",
+                        "--oneline",
+                        "--first-parent",
+                        "HEAD",
+                    ])
+                    .output()
+                    .await?;
+
+                if !output.status.success() {
+                    return Ok(None);
+                }
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                // Each line looks like: abc1234 (refs/heads/develop, refs/remotes/origin/develop) commit msg
+                // Walk through lines. On each line, collect candidate branch names.
+                // Prefer local branches (refs/heads/) over remote ones (refs/remotes/origin/).
+                for line in stdout.lines() {
+                    let Some(start) = line.find('(') else {
+                        continue;
+                    };
+                    let Some(end) = line.find(')') else {
+                        continue;
+                    };
+                    let refs_str = &line[start + 1..end];
+
+                    let mut local_candidate: Option<String> = None;
+                    let mut remote_candidate: Option<String> = None;
+
+                    for ref_entry in refs_str.split(',') {
+                        let ref_entry = ref_entry.trim();
+                        if let Some(branch) = ref_entry.strip_prefix("refs/heads/") {
+                            if branch != current_branch && local_candidate.is_none() {
+                                local_candidate = Some(branch.to_string());
+                            }
+                        } else if let Some(remote_branch) = ref_entry.strip_prefix("refs/remotes/origin/") {
+                            if remote_branch != "HEAD" && remote_branch != current_branch && remote_candidate.is_none() {
+                                remote_candidate = Some(remote_branch.to_string());
+                            }
+                        }
+                    }
+
+                    // Prefer local branch, fall back to remote
+                    if let Some(branch) = local_candidate.or(remote_candidate) {
+                        return Ok(Some(branch.into()));
+                    }
                 }
 
                 Ok(None)

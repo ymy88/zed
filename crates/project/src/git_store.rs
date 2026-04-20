@@ -6297,6 +6297,20 @@ impl Repository {
         })
     }
 
+    pub fn parent_branch(
+        &mut self,
+        current_branch: String,
+    ) -> oneshot::Receiver<Result<Option<SharedString>>> {
+        self.send_job(None, move |repo, _| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.parent_branch(&current_branch).await
+                }
+                RepositoryState::Remote(_) => Ok(None),
+            }
+        })
+    }
+
     pub fn diff_tree(
         &mut self,
         diff_type: DiffTreeType,

@@ -111,6 +111,7 @@ pub struct VsGitPanel {
     selected_compared_entry: Option<usize>,
     has_more_commits: bool,
     load_history_task: Task<()>,
+    load_compared_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -171,6 +172,7 @@ impl VsGitPanel {
                 selected_compared_entry: None,
                 has_more_commits: true,
                 load_history_task: Task::ready(()),
+                load_compared_task: Task::ready(()),
                 _subscriptions: vec![subscription],
             };
 
@@ -191,76 +193,102 @@ impl VsGitPanel {
         });
 
         self.load_history(0, window, cx);
-        self.load_compared_files(window, cx);
+        self.schedule_load_compared(window, cx);
+    }
+
+    fn schedule_load_compared(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.load_compared_task = cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(300)).await;
+            this.update_in(cx, |this, window, cx| {
+                this.load_compared_files(window, cx);
+            }).ok();
+        });
     }
 
     fn load_compared_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
+            log::info!("compared-section: no active repository, skipping");
             return;
         };
 
-        // Determine current branch and base branch
         let snapshot = repo.read(cx).snapshot();
-        let current_branch = snapshot.branch.as_ref().map(|b| b.name().to_string());
-        let upstream_ref = snapshot.branch.as_ref()
-            .and_then(|b| b.upstream.as_ref())
-            .map(|u| u.ref_name.clone());
+        let current_branch = match snapshot.branch.as_ref().map(|b| b.name().to_string()) {
+            Some(branch) => branch,
+            None => {
+                log::info!("compared-section: no current branch, skipping");
+                return;
+            }
+        };
 
-        // If we have an upstream, use that; otherwise find the default branch
-        if let Some(upstream) = upstream_ref {
-            let base_name: SharedString = upstream.split('/').last()
-                .unwrap_or(&upstream).to_string().into();
-            let rx = repo.update(cx, |repo, _cx| {
-                repo.diff_name_status(upstream.to_string())
-            });
-            cx.spawn_in(window, async move |this, cx| {
-                if let Ok(Ok(files)) = rx.await {
-                    this.update(cx, |this, cx| {
-                        this.base_branch = Some(base_name);
-                        this.compared_files = files;
-                        this.rebuild_entries(cx);
-                    }).ok();
-                }
-            }).detach();
-        } else {
-            // No upstream — try default branch
-            let rx = repo.update(cx, |repo, _cx| {
-                repo.default_branch(true)
-            });
-            let current_branch = current_branch.clone();
-            cx.spawn_in(window, async move |this, cx| {
-                if let Ok(Ok(Some(default_branch))) = rx.await {
-                    let default_name = default_branch.split('/').last()
+        log::info!("compared-section: finding base branch for {:?}", current_branch);
+
+        // Try default_branch first (uses origin/HEAD), fall back to parent_branch (git log)
+        let default_rx = repo.update(cx, |repo, _cx| {
+            repo.default_branch(true)
+        });
+        let parent_rx = repo.update(cx, |repo, _cx| {
+            repo.parent_branch(current_branch.clone())
+        });
+
+        let current_branch_name = current_branch.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            // Step 1: try default_branch (origin/HEAD)
+            let base_name = match default_rx.await {
+                Ok(Ok(Some(default_branch))) => {
+                    let name = default_branch.split('/').last()
                         .unwrap_or(&default_branch).to_string();
-
-                    // Don't compare if we're on the default branch
-                    let is_default = current_branch.as_deref() == Some(&default_name);
-                    if is_default {
+                    if name == current_branch_name {
+                        log::info!("compared-section: on default branch {:?}, skipping", name);
                         return;
                     }
-
-                    let base_name: SharedString = default_name.into();
-                    let base_ref = default_branch.clone();
-                    let rx = this.update(cx, |this, cx| {
-                        let repo = this.active_repository.clone();
-                        repo.map(|repo| {
-                            repo.update(cx, |repo, _cx| {
-                                repo.diff_name_status(base_ref.to_string())
-                            })
-                        })
-                    });
-                    if let Ok(Some(rx)) = rx {
-                        if let Ok(Ok(files)) = rx.await {
-                            this.update(cx, |this, cx| {
-                                this.base_branch = Some(base_name);
-                                this.compared_files = files;
-                                this.rebuild_entries(cx);
-                            }).ok();
+                    log::info!("compared-section: default_branch returned {:?}", name);
+                    SharedString::from(name)
+                }
+                _ => {
+                    // Step 2: fall back to parent_branch (git log --simplify-by-decoration)
+                    log::info!("compared-section: default_branch failed, trying parent_branch");
+                    match parent_rx.await {
+                        Ok(Ok(Some(parent))) => {
+                            log::info!("compared-section: parent_branch returned {:?}", parent);
+                            parent
+                        }
+                        _ => {
+                            log::info!("compared-section: no base branch found for {:?}", current_branch_name);
+                            return;
                         }
                     }
                 }
-            }).detach();
-        }
+            };
+
+            log::info!("compared-section: diffing against {:?}", base_name);
+
+            let rx = this.update(cx, |this, cx| {
+                let repo = this.active_repository.clone();
+                repo.map(|repo| {
+                    repo.update(cx, |repo, _cx| {
+                        repo.diff_name_status(base_name.to_string())
+                    })
+                })
+            });
+            if let Ok(Some(rx)) = rx {
+                match rx.await {
+                    Ok(Ok(files)) => {
+                        log::info!("compared-section: diff returned {} files against {:?}", files.len(), base_name);
+                        this.update(cx, |this, cx| {
+                            this.base_branch = Some(base_name);
+                            this.compared_files = files;
+                            this.rebuild_entries(cx);
+                        }).ok();
+                    }
+                    Ok(Err(e)) => {
+                        log::info!("compared-section: diff_name_status error: {e}");
+                    }
+                    Err(e) => {
+                        log::info!("compared-section: diff channel error: {e}");
+                    }
+                }
+            }
+        }).detach();
     }
 
     fn load_history(&mut self, skip: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -1315,6 +1343,10 @@ impl VsGitPanel {
                     .bg(cx.theme().colors().surface_background)
                     .cursor_pointer()
                     .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                    .tooltip(Tooltip::text(format!(
+                        "Target branch is determined by the remote repository's default branch (origin/HEAD). \
+                         If unavailable, falls back to the nearest parent branch in git history."
+                    )))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.compared_collapsed = !this.compared_collapsed;
                         if !this.compared_collapsed {

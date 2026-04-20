@@ -1174,6 +1174,13 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn parent_branch(
+        &self,
+        _current_branch: &str,
+    ) -> BoxFuture<'_, Result<Option<SharedString>>> {
+        async move { Ok(None) }.boxed()
+    }
+
     fn create_remote(&self, name: String, url: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             state.remotes.insert(name, url);
