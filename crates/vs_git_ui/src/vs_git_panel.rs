@@ -108,6 +108,7 @@ pub struct VsGitPanel {
     base_branch: Option<SharedString>,
     compared_files: Vec<(RepoPath, CommitFileStatus)>,
     compared_collapsed: bool,
+    selected_compared_entry: Option<usize>,
     has_more_commits: bool,
     load_history_task: Task<()>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -162,11 +163,12 @@ impl VsGitPanel {
                 expanded_commits: HashSet::default(),
                 commit_files: std::collections::HashMap::new(),
                 history_loaded: false,
-                history_collapsed: false,
+                history_collapsed: true,
                 history_height: 0.4,
                 base_branch: None,
                 compared_files: Vec::new(),
-                compared_collapsed: false,
+                compared_collapsed: true,
+                selected_compared_entry: None,
                 has_more_commits: true,
                 load_history_task: Task::ready(()),
                 _subscriptions: vec![subscription],
@@ -954,47 +956,86 @@ impl VsGitPanel {
             )
     }
 
-    fn render_entries(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let entry_count = self.status_entries.len();
+    fn render_entries(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .id("status-entries")
+            .flex_shrink()
+            .children(
+                self.render_change_groups(window, cx)
+            )
+    }
 
-        uniform_list(
-            "vs-git-entries",
-            entry_count,
-            cx.processor(
-                move |this: &mut Self, range: std::ops::Range<usize>, window, cx| {
-                    range
-                        .map(|ix| {
-                            let entry = &this.status_entries[ix];
-                            match entry {
-                                VsGitListEntry::GroupHeader { group, count } => this
-                                    .render_group_header(*group, *count, window, cx)
-                                    .into_any_element(),
-                                VsGitListEntry::FileEntry {
-                                    repo_path,
-                                    status,
-                                    staging,
-                                    group,
-                                } => this
-                                    .render_file_entry(
-                                        ix,
-                                        repo_path.clone(),
-                                        *status,
-                                        *staging,
-                                        *group,
-                                        window,
-                                        cx,
-                                    )
-                                    .into_any_element(),
-                                _ => gpui::Empty.into_any_element(),
-                            }
-                        })
-                        .collect()
-                },
-            ),
-        )
-        .flex_shrink()
-        .with_sizing_behavior(ListSizingBehavior::Infer)
-        .track_scroll(&self.status_scroll_handle)
+    fn render_change_groups(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let mut groups: Vec<gpui::AnyElement> = Vec::new();
+        let mut ix = 0;
+
+        while ix < self.status_entries.len() {
+            if let VsGitListEntry::GroupHeader { group, count } = &self.status_entries[ix] {
+                let group = *group;
+                let count = *count;
+                ix += 1;
+
+                let mut file_elements = Vec::new();
+                while ix < self.status_entries.len() {
+                    if let VsGitListEntry::FileEntry {
+                        repo_path,
+                        status,
+                        staging,
+                        group: entry_group,
+                    } = &self.status_entries[ix]
+                    {
+                        if *entry_group != group {
+                            break;
+                        }
+                        file_elements.push(
+                            self.render_file_entry(
+                                ix,
+                                repo_path.clone(),
+                                *status,
+                                *staging,
+                                *entry_group,
+                                window,
+                                cx,
+                            )
+                            .into_any_element(),
+                        );
+                        ix += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                let group_id = match group {
+                    ChangeGroup::MergeConflicts => "conflicts-group",
+                    ChangeGroup::StagedChanges => "staged-group",
+                    ChangeGroup::Changes => "changes-group",
+                };
+
+                groups.push(
+                    v_flex()
+                        .id(group_id)
+                        .w_full()
+                        .child(self.render_group_header(group, count, window, cx))
+                        .child(
+                            v_flex()
+                                .id(ElementId::Name(
+                                    format!("{}-content", group_id).into(),
+                                ))
+                                .w_full()
+                                .children(file_elements),
+                        )
+                        .into_any_element(),
+                );
+            } else {
+                ix += 1;
+            }
+        }
+
+        groups
     }
 
     fn render_group_header(
@@ -1260,7 +1301,10 @@ impl VsGitPanel {
         let collapsed = self.compared_collapsed;
 
         v_flex()
+            .id("compared-section")
             .w_full()
+            .flex_shrink()
+            .min_h_0()
             .child(
                 h_flex()
                     .id("compared-header")
@@ -1273,7 +1317,10 @@ impl VsGitPanel {
                     .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.compared_collapsed = !this.compared_collapsed;
-                        cx.notify();
+                        if !this.compared_collapsed {
+                            this.history_collapsed = true;
+                        }
+                        this.rebuild_entries(cx);
                     }))
                     .child(
                         Icon::new(if collapsed {
@@ -1305,7 +1352,15 @@ impl VsGitPanel {
                 let file_elements: Vec<_> = self.compared_files.iter().enumerate().map(|(ix, (path, status))| {
                     self.render_compared_file_entry(ix, path.clone(), *status, cx).into_any_element()
                 }).collect();
-                el.children(file_elements)
+                el.child(
+                    v_flex()
+                        .id("compared-content")
+                        .w_full()
+                        .flex_shrink()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .children(file_elements)
+                )
             })
     }
 
@@ -1332,6 +1387,7 @@ impl VsGitPanel {
         };
 
         let base_branch = self.base_branch.clone().unwrap_or("main".into());
+        let is_selected = self.selected_compared_entry == Some(ix);
 
         h_flex()
             .id(ElementId::NamedInteger("compared-file".into(), ix as u64))
@@ -1340,13 +1396,18 @@ impl VsGitPanel {
             .pr_2()
             .py_0p5()
             .gap_1()
+            .when(is_selected, |el| {
+                el.bg(cx.theme().colors().ghost_element_selected)
+            })
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
             .cursor_pointer()
             .on_click({
                 let click_path = path.clone();
                 let click_base = base_branch.clone();
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.selected_compared_entry = Some(ix);
                     this.open_compared_file_diff(click_base.clone(), click_path.clone(), window, cx);
+                    cx.notify();
                 })
             })
             .child(
@@ -1441,6 +1502,9 @@ impl VsGitPanel {
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                 this.history_collapsed = !this.history_collapsed;
+                if !this.history_collapsed {
+                    this.compared_collapsed = true;
+                }
                 this.rebuild_entries(cx);
             }))
             .child(
@@ -1769,6 +1833,8 @@ impl Render for VsGitPanel {
         let has_history = !self.history_entries.is_empty();
         let has_compared = !self.compared_files.is_empty();
         let has_bottom_section = has_history || has_compared;
+        let bottom_expanded = has_bottom_section
+            && (!self.history_collapsed || (has_compared && !self.compared_collapsed));
 
         v_flex()
             .id("vs_git_panel")
@@ -1783,46 +1849,55 @@ impl Render for VsGitPanel {
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
-            .child(self.render_branch_indicator(window, cx))
-            .relative()
-            .when(has_status, |el| {
-                el.child(self.render_entries(window, cx))
-            })
-            .when(!has_status && !has_bottom_section, |el| {
-                el.child(self.render_empty_state(cx))
-            })
             .on_drag_move::<DraggedHistoryHandle>(
                 cx.listener(|this, event: &gpui::DragMoveEvent<DraggedHistoryHandle>, _window, _cx| {
                     let bounds = event.bounds;
                     let drag_y = event.event.position.y;
                     let bounds_height = bounds.bottom() - bounds.top();
                     if bounds_height > px(0.) {
-                        // drag_y is from top; we want ratio from bottom
                         let ratio_from_bottom = ((bounds.bottom() - drag_y) / bounds_height).clamp(0.1, 0.8);
                         this.history_height = ratio_from_bottom;
                     }
                 }),
             )
+            // Top section: branch indicator + status entries (aligned to top)
+            .child(
+                v_flex()
+                    .id("top-section")
+                    .flex_grow()
+                    .flex_shrink()
+                    .min_h_0()
+                    .justify_start()
+                    .child(self.render_branch_indicator(window, cx))
+                    .when(has_status, |el| {
+                        el.child(self.render_entries(window, cx))
+                    })
+                    .when(!has_status && !has_bottom_section, |el| {
+                        el.child(self.render_empty_state(cx))
+                    })
+            )
+            // Bottom section: compared to + commit history (aligned to bottom)
             .when(has_bottom_section, |el| {
                 let history_collapsed = self.history_collapsed;
                 let history_height = self.history_height;
                 el.child(
                     v_flex()
-                        .absolute()
-                        .bottom_0()
-                        .left_0()
+                        .id("bottom-section")
+                        .flex_shrink_0()
                         .w_full()
-                        .when(history_collapsed && !has_compared, |el| el)
-                        .when(!history_collapsed || has_compared, |el| el.h(relative(history_height)))
-                        .bg(cx.theme().colors().panel_background)
-                        // Drag handle border (only when expanded)
-                        .when(!history_collapsed || has_compared, |el| {
+                        .justify_end()
+                        .when(bottom_expanded, |el| {
+                            el.flex_basis(relative(history_height))
+                                .flex_shrink()
+                                .min_h_0()
+                        })
+                        // Drag handle (only when something is expanded)
+                        .when(bottom_expanded, |el| {
                             el.child(
                                 div()
-                                    .id("history-resize-handle")
+                                    .id("bottom-section-handle")
                                     .w_full()
                                     .h(px(4.))
-                                    .mt(px(-2.))
                                     .cursor_row_resize()
                                     .on_drag(DraggedHistoryHandle, |_, _, _, cx| cx.new(|_| gpui::Empty))
                                     .hover(|style| style.bg(cx.theme().colors().border))
@@ -1832,18 +1907,26 @@ impl Render for VsGitPanel {
                         .when(has_compared, |el| {
                             el.child(self.render_compared_section(window, cx))
                         })
-                        // History header
+                        // History section (header + content)
                         .when(has_history, |el| {
-                            el.child(self.render_history_header_standalone(cx))
-                        })
-                        // History content (hidden when collapsed)
-                        .when(has_history && !history_collapsed, |el| {
                             el.child(
                                 v_flex()
-                                    .flex_grow()
-                                    .min_h_0()
-                                    .overflow_hidden()
-                                    .child(self.render_history_list(window, cx)),
+                                    .id("history-section")
+                                    .w_full()
+                                    .when(!history_collapsed, |el| {
+                                        el.flex_grow().min_h_0()
+                                    })
+                                    .child(self.render_history_header_standalone(cx))
+                                    .when(!history_collapsed, |el| {
+                                        el.child(
+                                            v_flex()
+                                                .id("history-content")
+                                                .flex_grow()
+                                                .min_h_0()
+                                                .overflow_hidden()
+                                                .child(self.render_history_list(window, cx)),
+                                        )
+                                    }),
                             )
                         }),
                 )
