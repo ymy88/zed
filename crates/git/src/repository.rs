@@ -2080,15 +2080,12 @@ impl GitRepository for RealGitRepository {
                     .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
                     .unwrap_or_default();
 
-                // New text: git show HEAD:<path>
-                let new_output = git
-                    .build_command(&["show", &format!("HEAD:{}", path.as_unix_str())])
-                    .output()
-                    .await;
+                // New text: read from working tree
+                let file_path = git.working_directory.join(path.as_ref().as_std_path());
+                let new_output = smol::fs::read(&file_path).await;
                 let new_text = new_output
                     .ok()
-                    .filter(|o| o.status.success())
-                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                    .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
                     .unwrap_or_default();
 
                 Ok((old_text, new_text))
