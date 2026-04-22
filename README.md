@@ -6,6 +6,16 @@ This fork adds a **VS Code-style Source Control panel** and **side-by-side diff 
 
 Zed's built-in Git panel groups files by "tracked" vs "untracked" and opens a single combined diff for all changes. We prefer VS Code's approach: separating **Staged Changes** from **Changes** (unstaged), and clicking a file opens a diff for **that file only**. This fork brings that workflow to Zed.
 
+### Screenshots
+
+**Unstaged changes** — Working copy vs index, with stage/restore buttons in the divider:
+
+<img src="https://github.com/user-attachments/assets/5d9879ef-9fd0-4506-9446-0ee025b8310a" width="900" alt="Unstaged changes diff view" />
+
+**Staged changes** — Index vs HEAD, ready for commit:
+
+<img src="https://github.com/user-attachments/assets/b1fcfb51-7b8c-498f-982c-7de3fae70a30" width="900" alt="Staged changes diff view" />
+
 ### Key Features
 
 1. **Staged vs Unstaged grouping** — Files are categorized into "Staged Changes" and "Changes" sections, just like VS Code. Partially staged files appear in both. No more guessing what's going into your next commit.
