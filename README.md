@@ -10,11 +10,11 @@ Zed's built-in Git panel groups files by "tracked" vs "untracked" and opens a si
 
 **Unstaged changes** — Working copy vs index, with stage/restore buttons in the divider:
 
-<img src="https://github.com/user-attachments/assets/5d9879ef-9fd0-4506-9446-0ee025b8310a" width="900" alt="Unstaged changes diff view" />
+<img src="docs/images/unstaged.png" width="900" alt="Unstaged changes diff view" />
 
 **Staged changes** — Index vs HEAD, ready for commit:
 
-<img src="https://github.com/user-attachments/assets/b1fcfb51-7b8c-498f-982c-7de3fae70a30" width="900" alt="Staged changes diff view" />
+<img src="docs/images/staged.png" width="900" alt="Staged changes diff view" />
 
 ### Key Features
 
