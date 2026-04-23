@@ -1,6 +1,6 @@
-# Zed + VS Code-Style Git UI (Fork)
+# Zed + VS Code-Style Git UI (Personal Fork)
 
-This fork adds a **VS Code-style Source Control panel** and **side-by-side diff view** to Zed, because we love how VS Code handles Git.
+This is a **personal** fork of Zed with a VS Code-style Source Control panel, side-by-side diff view, and trimmed features for a leaner build.
 
 ### Why This Fork?
 
@@ -40,6 +40,16 @@ Zed's built-in Git panel groups files by "tracked" vs "untracked" and opens a si
 - **Auto-scroll to first change** when opening a diff
 - **Proactive diff recalculation** after staging — reduces feedback from ~480ms to ~37ms
 - **Custom logo** (Zed + VS Code) to distinguish this build
+
+### Removed Features (Personal Branch)
+
+This branch strips out features not needed for solo development:
+- **Collaboration** — real-time co-editing, voice calls, channels, audio (crates: `call`, `channel`, `collab`, `collab_ui`, `audio`, `livekit_api`, `livekit_client`, `denoise`)
+
+### Branches
+
+- **`vs-git`** — full fork with all features intact (default branch)
+- **`personal`** — trimmed build with removed collab
 
 ### Building
 
