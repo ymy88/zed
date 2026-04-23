@@ -136,6 +136,7 @@ Other entities can then register a callback to handle these events by doing `cx.
 ## Build guidelines
 
 - Use `./script/clippy` instead of `cargo clippy`
+- All code changes must compile with 0 errors and 0 warnings. Fix all warnings before committing.
 
 # Pull request hygiene
 
