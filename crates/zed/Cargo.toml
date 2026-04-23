@@ -68,7 +68,7 @@ activity_indicator.workspace = true
 agent.workspace = true
 agent-client-protocol.workspace = true
 agent_settings.workspace = true
-agent_ui = { workspace = true, features = ["audio"] }
+agent_ui.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
@@ -242,7 +242,6 @@ ashpd.workspace = true
 pkg-config = "0.3.22"
 
 [dev-dependencies]
-call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }

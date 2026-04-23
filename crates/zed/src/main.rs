@@ -699,6 +699,7 @@ fn main() {
 
         load_embedded_fonts(cx);
 
+        title_bar::init(cx);
         editor::init(cx);
         image_viewer::init(cx);
         repl::notebook::init(cx);
