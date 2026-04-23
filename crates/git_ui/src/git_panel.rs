@@ -10,7 +10,6 @@ use crate::{
     file_history_view::FileHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
     repository_selector::RepositorySelector,
 };
-use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -56,7 +55,6 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
-use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, StatusStyle};
@@ -765,9 +763,9 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            let mut was_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+            let mut was_ai_enabled = false;
             let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-                let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+                let is_ai_enabled = false;
                 if was_ai_enabled != is_ai_enabled {
                     was_ai_enabled = is_ai_enabled;
                     cx.notify();
@@ -2621,7 +2619,7 @@ impl GitPanel {
                 }
 
                 let worktree_snapshot = worktree.read(cx).snapshot();
-                for rules_name in RULES_FILE_NAMES {
+                for rules_name in [".rules", "RULES.md", ".cursorrules", ".clinerules"] {
                     if let Ok(rel_path) = RelPath::unix(rules_name) {
                         if let Some(entry) = worktree_snapshot.entry_for_path(rel_path) {
                             if entry.is_file() {
@@ -2654,23 +2652,13 @@ impl GitPanel {
         }
     }
 
-    async fn load_commit_message_prompt(cx: &mut AsyncApp) -> String {
-        let load = async {
-            let store = cx.update(|cx| PromptStore::global(cx)).await.ok()?;
-            store
-                .update(cx, |s, cx| {
-                    s.load(PromptId::BuiltIn(BuiltInPrompt::CommitMessage), cx)
-                })
-                .await
-                .ok()
-        };
-        load.await
-            .unwrap_or_else(|| BuiltInPrompt::CommitMessage.default_content().to_string())
+    async fn load_commit_message_prompt(_cx: &mut AsyncApp) -> String {
+        "Write a concise commit message summarizing the changes. Use imperative mood.".to_string()
     }
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
+        if !self.can_commit() {
             return;
         }
 
@@ -2694,7 +2682,7 @@ impl GitPanel {
             }
         });
 
-        let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let temperature: Option<f32> = None;
         let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
@@ -3938,7 +3926,7 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if !agent_settings::AgentSettings::get_global(cx).enabled(cx) {
+        if true {
             return None;
         }
 

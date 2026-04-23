@@ -21,6 +21,7 @@ pub struct SettingsInputField {
     color: Option<Color>,
 }
 
+#[allow(dead_code)]
 impl SettingsInputField {
     pub fn new() -> Self {
         Self {

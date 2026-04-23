@@ -1,7 +1,6 @@
 mod preview;
 mod repl_menu;
 
-use agent_settings::AgentSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, CodeActionSource, DuplicateLineDown, GoToDiagnostic,
     GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
@@ -48,18 +47,7 @@ impl QuickActionBar {
         workspace: &Workspace,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut was_agent_enabled = AgentSettings::get_global(cx).enabled(cx);
-        let mut was_agent_button = AgentSettings::get_global(cx).button;
-
-        let ai_settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-            let agent_settings = AgentSettings::get_global(cx);
-            let is_agent_enabled = agent_settings.enabled(cx);
-
-            if was_agent_enabled != is_agent_enabled || was_agent_button != agent_settings.button {
-                was_agent_enabled = is_agent_enabled;
-                was_agent_button = agent_settings.button;
-                cx.notify();
-            }
+        let ai_settings_subscription = cx.observe_global::<SettingsStore>(move |_, _cx| {
         });
 
         let mut this = Self {
@@ -653,7 +641,7 @@ impl Render for QuickActionBar {
             .children(self.render_preview_button(self.workspace.clone(), cx))
             .children(search_button)
             .when(
-                AgentSettings::get_global(cx).enabled(cx) && AgentSettings::get_global(cx).button,
+                false,
                 |bar| bar.child(assistant_button),
             )
             .children(code_actions_dropdown)

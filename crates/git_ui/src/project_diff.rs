@@ -4,7 +4,6 @@ use crate::{
     git_panel_settings::GitPanelSettings,
     resolve_active_repository,
 };
-use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
@@ -1651,7 +1650,7 @@ impl Render for BranchDiffToolbar {
         let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
 
         let is_multibuffer_empty = project_diff.read(cx).multibuffer.read(cx).is_empty();
-        let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+        let is_ai_enabled = false;
 
         let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 

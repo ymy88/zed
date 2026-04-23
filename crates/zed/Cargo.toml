@@ -35,18 +35,14 @@ visual-tests = [
     "dep:image",
     "dep:tempfile",
     "dep:action_log",
-    "dep:agent_servers",
     "workspace/test-support",
     "project/test-support",
     "editor/test-support",
     "terminal_view/test-support",
     "image_viewer/test-support",
     "clock/test-support",
-    "acp_thread/test-support",
     "action_log/test-support",
-    "agent_ui/test-support",
     "db/test-support",
-    "agent/test-support",
     "language_model/test-support",
     "fs/test-support",
     "recent_projects/test-support",
@@ -63,12 +59,7 @@ path = "src/visual_test_runner.rs"
 required-features = ["visual-tests"]
 
 [dependencies]
-acp_tools.workspace = true
 activity_indicator.workspace = true
-agent.workspace = true
-agent-client-protocol.workspace = true
-agent_settings.workspace = true
-agent_ui.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
@@ -120,9 +111,7 @@ image = { workspace = true, optional = true }
 semver.workspace = true
 tempfile = { workspace = true, optional = true }
 clock = { workspace = true, optional = true }
-acp_thread.workspace = true
 action_log = { workspace = true, optional = true }
-agent_servers = { workspace = true, optional = true }
 gpui_tokio.workspace = true
 rayon.workspace = true
 
@@ -138,7 +127,6 @@ keymap_editor.workspace = true
 language.workspace = true
 language_extension.workspace = true
 language_model.workspace = true
-language_models.workspace = true
 language_onboarding.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
@@ -164,7 +152,6 @@ profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
-prompt_store.workspace = true
 proto.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
@@ -181,7 +168,6 @@ settings.workspace = true
 settings_profile_selector.workspace = true
 settings_ui.workspace = true
 shellexpand.workspace = true
-sidebar.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
@@ -212,8 +198,6 @@ uuid.workspace = true
 vim.workspace = true
 vim_mode_setting.workspace = true
 watch.workspace = true
-web_search.workspace = true
-web_search_providers.workspace = true
 which_key.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
@@ -254,7 +238,6 @@ terminal_view = { workspace = true, features = ["test-support"] }
 title_bar = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 image.workspace = true
-agent_ui = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
 repl = { workspace = true, features = ["test-support"] }
 

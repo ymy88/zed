@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use collections::HashMap;
-use context_server::ContextServerCommand;
+use settings::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;

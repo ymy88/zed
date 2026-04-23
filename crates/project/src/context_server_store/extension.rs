@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use context_server::ContextServerCommand;
 use extension::{
     ContextServerConfiguration, Extension, ExtensionContextServerProxy, ExtensionHostProxy,
     ProjectDelegate,
 };
 use gpui::{App, AsyncApp, Entity, Task};
+use settings::ContextServerCommand;
 
 use crate::worktree_store::WorktreeStore;
 

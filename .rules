@@ -137,6 +137,7 @@ Other entities can then register a callback to handle these events by doing `cx.
 
 - Use `./script/clippy` instead of `cargo clippy`
 - All code changes must compile with 0 errors and 0 warnings. Fix all warnings before committing.
+- When the user says "remove", actually delete the code — do not hide it, disable it, stub it, or guard it with conditions. Remove means remove.
 
 # Pull request hygiene
 

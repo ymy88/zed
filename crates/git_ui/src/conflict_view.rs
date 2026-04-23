@@ -1,4 +1,3 @@
-use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
     ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
@@ -14,7 +13,6 @@ use project::{
     ConflictRegion, ConflictSet, ConflictSetUpdate, Project, ProjectItem as _,
     git_store::{GitStoreEvent, RepositoryEvent},
 };
-use settings::Settings;
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 use ui::{ActiveTheme, Divider, Element as _, Styled, Window, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
@@ -294,7 +292,7 @@ fn render_conflict_buttons(
     editor: WeakEntity<Editor>,
     cx: &mut BlockContext,
 ) -> AnyElement {
-    let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+    let is_ai_enabled = false;
 
     h_flex()
         .id(cx.block_id)
@@ -447,7 +445,7 @@ pub(crate) fn register_conflict_notification(
             GitStoreEvent::ConflictsUpdated
                 | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
         );
-        if !AgentSettings::get_global(cx).enabled(cx) || !conflicts_changed {
+        if !conflicts_changed {
             return;
         }
         let project = workspace.project().read(cx);

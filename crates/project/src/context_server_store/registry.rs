@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use collections::HashMap;
-use context_server::ContextServerCommand;
 use extension::ContextServerConfiguration;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Global, Task};
+use settings::ContextServerCommand;
 
 use crate::worktree_store::WorktreeStore;
 
@@ -31,9 +31,6 @@ pub struct ContextServerDescriptorRegistry {
 }
 
 impl ContextServerDescriptorRegistry {
-    /// Returns the global [`ContextServerDescriptorRegistry`].
-    ///
-    /// Inserts a default [`ContextServerDescriptorRegistry`] if one does not yet exist.
     pub fn default_global(cx: &mut App) -> Entity<Self> {
         if !cx.has_global::<GlobalContextServerDescriptorRegistry>() {
             let registry = cx.new(|_| Self::new());
@@ -61,7 +58,6 @@ impl ContextServerDescriptorRegistry {
         self.context_servers.get(id).cloned()
     }
 
-    /// Registers the provided [`ContextServerDescriptor`].
     pub fn register_context_server_descriptor(
         &mut self,
         id: Arc<str>,
@@ -72,7 +68,6 @@ impl ContextServerDescriptorRegistry {
         cx.notify();
     }
 
-    /// Unregisters the [`ContextServerDescriptor`] for the server with the given ID.
     pub fn unregister_context_server_descriptor_by_id(
         &mut self,
         server_id: &str,

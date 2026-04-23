@@ -1,7 +1,6 @@
 #![allow(clippy::format_collect)]
 
 mod color_extractor;
-mod context_server_store;
 mod debugger;
 mod ext_agent_tests;
 mod extension_agent_tests;

@@ -1,6 +1,5 @@
 use crate::handle_open_request;
 use crate::restore_or_create_workspace;
-use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
@@ -50,9 +49,11 @@ pub enum OpenRequestKind {
         extension_id: String,
     },
     AgentPanel {
-        external_source_prompt: Option<ExternalSourcePrompt>,
+        #[allow(dead_code)]
+        external_source_prompt: Option<String>,
     },
     SharedAgentThread {
+        #[allow(dead_code)]
         session_id: String,
     },
     DockMenuAction {
@@ -170,7 +171,7 @@ impl OpenRequest {
         let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
             url::form_urlencoded::parse(query.as_bytes())
                 .find_map(|(key, value)| (key == "prompt").then_some(value))
-                .and_then(|prompt| ExternalSourcePrompt::new(prompt.as_ref()))
+                .map(|prompt| prompt.to_string())
         });
         self.kind = Some(OpenRequestKind::AgentPanel {
             external_source_prompt,
@@ -840,8 +841,7 @@ mod tests {
             }) => {
                 assert_eq!(
                     external_source_prompt
-                        .as_ref()
-                        .map(ExternalSourcePrompt::as_str),
+                        .as_deref(),
                     Some("Write me a script\nThanks")
                 );
             }

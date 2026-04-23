@@ -44,12 +44,15 @@ Zed's built-in Git panel groups files by "tracked" vs "untracked" and opens a si
 ### Removed Features (Personal Branch)
 
 This branch strips out features not needed for solo development:
-- **Collaboration** — real-time co-editing, voice calls, channels, audio (crates: `call`, `channel`, `collab`, `collab_ui`, `audio`, `livekit_api`, `livekit_client`, `denoise`)
+- **Collaboration** — we don't have any use case for multiple people working on the same worktree, so real-time co-editing, voice calls, channels, and audio are removed
+- **AI Agent/Chat** — we use Claude Code in the terminal for AI assistance, so we don't need an AI agent built into the IDE. The agent panel, inline assistant, thread sidebar, and related features are removed
+
+Edit prediction (autocomplete suggestions) is kept — it's useful for small inline edits while reviewing diffs.
 
 ### Branches
 
 - **`vs-git`** — full fork with all features intact (default branch)
-- **`personal`** — trimmed build with removed collab
+- **`personal`** — trimmed build with collab and AI agent removed
 
 ### Building
 
