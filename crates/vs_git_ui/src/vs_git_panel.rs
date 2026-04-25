@@ -104,7 +104,7 @@ pub struct VsGitPanel {
     commit_files: std::collections::HashMap<SharedString, Vec<CommitFile>>,
     history_loaded: bool,
     history_collapsed: bool,
-    history_height: f32,
+    history_height: Pixels,
     base_branch: Option<SharedString>,
     compared_files: Vec<(RepoPath, CommitFileStatus)>,
     compared_collapsed: bool,
@@ -165,7 +165,7 @@ impl VsGitPanel {
                 commit_files: std::collections::HashMap::new(),
                 history_loaded: false,
                 history_collapsed: true,
-                history_height: 0.4,
+                history_height: px(300.),
                 base_branch: None,
                 compared_files: Vec::new(),
                 compared_collapsed: true,
@@ -987,7 +987,10 @@ impl VsGitPanel {
     fn render_entries(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("status-entries")
+            .flex_grow()
             .flex_shrink()
+            .min_h_0()
+            .overflow_y_scroll()
             .children(
                 self.render_change_groups(window, cx)
             )
@@ -1885,11 +1888,10 @@ impl Render for VsGitPanel {
                 cx.listener(|this, event: &gpui::DragMoveEvent<DraggedHistoryHandle>, _window, _cx| {
                     let bounds = event.bounds;
                     let drag_y = event.event.position.y;
-                    let bounds_height = bounds.bottom() - bounds.top();
-                    if bounds_height > px(0.) {
-                        let ratio_from_bottom = ((bounds.bottom() - drag_y) / bounds_height).clamp(0.1, 0.8);
-                        this.history_height = ratio_from_bottom;
-                    }
+                    let new_height = bounds.bottom() - drag_y;
+                    let min_height = px(40.);
+                    let max_height = (bounds.bottom() - bounds.top()) * 0.8;
+                    this.history_height = new_height.clamp(min_height, max_height);
                 }),
             )
             // Top section: branch indicator + status entries (aligned to top)
@@ -1919,9 +1921,7 @@ impl Render for VsGitPanel {
                         .w_full()
                         .justify_end()
                         .when(bottom_expanded, |el| {
-                            el.flex_basis(relative(history_height))
-                                .flex_shrink()
-                                .min_h_0()
+                            el.h(history_height)
                         })
                         // Drag handle (only when something is expanded)
                         .when(bottom_expanded, |el| {
