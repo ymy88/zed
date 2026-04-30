@@ -18,14 +18,27 @@ use crate::{
 };
 
 /// Pastes text from the specified register at the cursor position.
-#[derive(Clone, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub struct Paste {
     #[serde(default)]
     before: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     preserve_clipboard: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for Paste {
+    fn default() -> Self {
+        Self {
+            before: false,
+            preserve_clipboard: true,
+        }
+    }
 }
 
 impl Vim {

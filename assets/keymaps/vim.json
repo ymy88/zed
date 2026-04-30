@@ -289,7 +289,7 @@
       "y": "vim::VisualYank",
       "shift-y": "vim::VisualYankLine",
       "p": "vim::Paste",
-      "shift-p": ["vim::Paste", { "preserve_clipboard": true }],
+      "shift-p": "vim::Paste",
       "c": "vim::Substitute",
       "s": "vim::Substitute",
       "shift-r": "vim::SubstituteLine",
