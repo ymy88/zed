@@ -272,10 +272,12 @@ pub struct ProjectSearchView {
     _subscriptions: Vec<Subscription>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProjectSearchSettings {
     search_options: SearchOptions,
     filters_enabled: bool,
+    included_files: String,
+    excluded_files: String,
 }
 
 pub struct ProjectSearchBar {
@@ -754,27 +756,31 @@ impl ProjectSearchView {
 
     fn toggle_filters(&mut self, cx: &mut Context<Self>) {
         self.filters_enabled = !self.filters_enabled;
+        let current = self.current_settings(cx);
         ActiveSettings::update_global(cx, |settings, cx| {
             settings.0.insert(
                 self.entity.read(cx).project.downgrade(),
-                self.current_settings(),
+                current,
             );
         });
     }
 
-    fn current_settings(&self) -> ProjectSearchSettings {
+    fn current_settings(&self, cx: &App) -> ProjectSearchSettings {
         ProjectSearchSettings {
             search_options: self.search_options,
             filters_enabled: self.filters_enabled,
+            included_files: self.included_files_editor.read(cx).text(cx),
+            excluded_files: self.excluded_files_editor.read(cx).text(cx),
         }
     }
 
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut Context<Self>) {
         self.search_options.toggle(option);
+        let current = self.current_settings(cx);
         ActiveSettings::update_global(cx, |settings, cx| {
             settings.0.insert(
                 self.entity.read(cx).project.downgrade(),
-                self.current_settings(),
+                current,
             );
         });
         self.adjust_query_regex_language(cx);
@@ -902,13 +908,19 @@ impl ProjectSearchView {
         let mut subscriptions = Vec::new();
 
         // Read in settings if available
-        let (mut options, filters_enabled) = if let Some(settings) = settings {
-            (settings.search_options, settings.filters_enabled)
-        } else {
-            let search_options =
-                SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
-            (search_options, false)
-        };
+        let (mut options, filters_enabled, included_files, excluded_files) =
+            if let Some(settings) = settings {
+                (
+                    settings.search_options,
+                    settings.filters_enabled,
+                    settings.included_files,
+                    settings.excluded_files,
+                )
+            } else {
+                let search_options =
+                    SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+                (search_options, false, String::new(), String::new())
+            };
 
         {
             let entity = entity.read(cx);
@@ -981,7 +993,9 @@ impl ProjectSearchView {
         let included_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Include: crates/**/*.toml", window, cx);
-
+            if !included_files.is_empty() {
+                editor.set_text(included_files, window, cx);
+            }
             editor
         });
         // Subscribe to include_files_editor in order to reraise editor events for workspace item activation purposes
@@ -994,7 +1008,9 @@ impl ProjectSearchView {
         let excluded_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Exclude: vendor/*, *.lock", window, cx);
-
+            if !excluded_files.is_empty() {
+                editor.set_text(excluded_files, window, cx);
+            }
             editor
         });
         // Subscribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
@@ -1297,6 +1313,13 @@ impl ProjectSearchView {
         } else {
             None
         };
+        let current = self.current_settings(cx);
+        ActiveSettings::update_global(cx, |settings, cx| {
+            settings.0.insert(
+                self.entity.read(cx).project.downgrade(),
+                current,
+            );
+        });
         if let Some(query) = self.build_search_query(cx, open_buffers) {
             self.entity.update(cx, |model, cx| model.search(query, cx));
         }
