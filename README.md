@@ -113,7 +113,7 @@ On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/dow
 
 Other platforms are not yet available:
 
-- Web ([tracking issue](https://github.com/zed-industries/zed/issues/5396))
+- Web ([tracking discussion](https://github.com/zed-industries/zed/discussions/26195))
 
 ### Developing Zed
 
@@ -128,6 +128,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
 Also... we're hiring! Check out our [jobs](https://zed.dev/jobs) page for open roles.
 
 ### Licensing
+
+Zed source code is licensed primarily under GPL-3.0-or-later, with Apache-2.0 components where marked.
 
 License information for third party dependencies must be correctly provided for CI to pass.
 
@@ -144,3 +146,12 @@ Zed is developed by **Zed Industries, Inc.**, a for-profit company.
 If you’d like to financially support the project, you can do so via GitHub Sponsors.
 Sponsorships go directly to Zed Industries and are used as general company revenue.
 There are no perks or entitlements associated with sponsorship.
+
+
+
+- me: do a nixos integration test (using KVM)
+- agent: i need to turn off the sandbox
+- me: "allow for this thread"
+- agent: runs the tests unsandboxed
+- me: use the terminal to ls this directory
+- agent: runs `ls` *sandboxed*

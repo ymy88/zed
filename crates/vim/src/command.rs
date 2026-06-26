@@ -8,7 +8,8 @@ use editor::{
 };
 use futures::AsyncWriteExt as _;
 use gpui::{
-    Action, App, AppContext as _, Context, Global, Keystroke, Task, WeakEntity, Window, actions,
+    Action, App, AppContext as _, Context, Global, Keystroke, Task, TaskExt, WeakEntity, Window,
+    actions,
 };
 use itertools::Itertools;
 use language::Point;
@@ -28,7 +29,7 @@ use std::{
     sync::OnceLock,
     time::Instant,
 };
-use task::{HideStrategy, RevealStrategy, SaveStrategy, SpawnInTerminal, TaskId};
+use task::{HideStrategy, RevealStrategy, SaveStrategy, Shell, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::{
     ResultExt,
@@ -344,15 +345,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             &["Cancel"],
             cx,
         );
-    });
-
-    Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window, cx) else {
-            return;
-        };
-        workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>!", window, cx);
-        })
     });
 
     Vim::action(editor, cx, |vim, action: &VimSave, window, cx| {
@@ -1782,7 +1774,6 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("te", "rm"), "terminal_panel::Toggle"),
         VimCommand::str(("T", "erm"), "terminal_panel::Toggle"),
         VimCommand::str(("C", "ollab"), "collab_panel::ToggleFocus"),
-        VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
         VimCommand::str(("A", "I"), "agent::ToggleFocus"),
         VimCommand::str(("G", "it"), "git_panel::ToggleFocus"),
         VimCommand::str(("D", "ebug"), "debug_panel::ToggleFocus"),
@@ -2477,7 +2468,7 @@ impl ShellExec {
             workspace.update(cx, |workspace, cx| {
                 let project = workspace.project().read(cx);
                 let cwd = project.first_project_directory(cx);
-                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                let shell = Shell::System;
 
                 let spawn_in_terminal = SpawnInTerminal {
                     id: TaskId("vim".to_string()),
@@ -2549,7 +2540,7 @@ impl ShellExec {
             }
             editor.highlight_rows::<ShellExec>(
                 input_range.clone().unwrap(),
-                cx.theme().status().unreachable_background,
+                |cx| cx.theme().status().unreachable_background,
                 Default::default(),
                 cx,
             );

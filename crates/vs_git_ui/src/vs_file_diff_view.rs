@@ -335,19 +335,9 @@ impl VsFileDiffView {
                                 .expect("rhs buffer exists")
                         });
                         let rhs_snapshot = rhs_buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-                        let diff = cx.new(|cx| BufferDiff::new(&rhs_snapshot, cx));
-                        let update_task = diff.update(cx, |diff, cx| {
-                            diff.update_diff(
-                                rhs_snapshot.clone(),
-                                Some(head_text.as_str().into()),
-                                Some(true),
-                                None,
-                                cx,
-                            )
-                        });
-                        let update = update_task.await;
+                        let diff = cx.new(|cx| BufferDiff::new(&rhs_snapshot, None, None, cx));
                         let set_task = diff.update(cx, |diff, cx| {
-                            diff.set_snapshot(update, &rhs_snapshot, cx)
+                            diff.set_base_text(Some(head_text.as_str().into()), rhs_snapshot.clone(), cx)
                         });
                         set_task.await;
                         rhs_editor.update(cx, |editor, cx| {
@@ -617,15 +607,17 @@ impl VsFileDiffView {
         // Apply LHS row highlights for deleted/modified lines
         if !lhs_highlight_ranges.is_empty() {
             struct LhsDiffHighlight;
-            let deleted_color = cx.theme().colors().version_control_deleted;
-            let opacity = if cx.theme().appearance().is_light() { 0.16 } else { 0.12 };
-            let color = deleted_color.opacity(opacity);
             lhs_editor.update(cx, |editor, cx| {
                 editor.clear_row_highlights::<LhsDiffHighlight>();
                 for (range, _, _) in lhs_highlight_ranges {
                     editor.highlight_rows::<LhsDiffHighlight>(
                         range,
-                        color,
+                        |cx| {
+                            let deleted = cx.theme().colors().version_control_deleted;
+                            let opacity =
+                                if cx.theme().appearance().is_light() { 0.16 } else { 0.12 };
+                            deleted.opacity(opacity)
+                        },
                         editor::RowHighlightOptions {
                             include_gutter: true,
                             ..Default::default()
@@ -771,7 +763,7 @@ impl Render for VsFileDiffView {
             )
             .child(
                 div()
-                    .flex_shrink()
+                    .flex_shrink(1.)
                     .min_w_0()
                     .h_full()
                     .flex_basis(relative(left_ratio))
@@ -806,7 +798,7 @@ impl Render for VsFileDiffView {
             )
             .child(
                 div()
-                    .flex_shrink()
+                    .flex_shrink(1.)
                     .min_w_0()
                     .h_full()
                     .flex_basis(relative(right_ratio))

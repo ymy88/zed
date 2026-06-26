@@ -739,6 +739,7 @@
         }
       ],
       "cmd-ctrl-b": "branches::OpenRecent",
+      "cmd-ctrl-w": "git::Worktree",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
@@ -1071,6 +1072,7 @@
       "cmd-alt-c": "workspace::CopyPath",
       "alt-cmd-shift-c": "workspace::CopyRelativePath",
       "cmd-z": "project_panel::Undo",
+      "cmd-shift-z": "project_panel::Redo",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": [
@@ -1132,6 +1134,13 @@
       "backspace": "variable_list::RemoveWatch",
       "alt-enter": "variable_list::AddWatch"
     }
+  },
+  {
+    "context": "GitPanel",
+    "bindings": {
+      "cmd-1": "git_panel::ActivateChangesTab",
+      "cmd-2": "git_panel::ActivateHistoryTab",
+    },
   },
   {
     "context": "GitPanel && ChangesList && !GitBranchSelector",
@@ -1230,7 +1239,7 @@
     }
   },
   {
-    "context": "GitCommit > Editor",
+    "context": "GitCommit > Editor && mode == auto_height",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::Newline",
@@ -1340,6 +1349,7 @@
       "ctrl-cmd-space": "terminal::ShowCharacterPalette",
       "cmd-c": "terminal::Copy",
       "cmd-v": "terminal::Paste",
+      "ctrl-cmd-v": "terminal::PasteText",
       "cmd-f": "buffer_search::Deploy",
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
@@ -1436,6 +1446,13 @@
       "cmd-d": "pane::SplitRight",
       "cmd-alt-r": "terminal::RerunTask"
     }
+  },
+  {
+    "context": "AgentPanel > Terminal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "agent::NewThread",
+    },
   },
   {
     "context": "RatePredictionsModal",
@@ -1797,7 +1814,7 @@
   {
     "context": "NotebookEditor",
     "bindings": {
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "cmd-enter": "notebook::Run",
       "cmd-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
@@ -1809,10 +1826,18 @@
     }
   },
   {
+    "context": "NotebookEditor && notebook_mode == command",
+    "bindings": {
+      "enter": "notebook::EnterEditMode",
+      "down": "menu::SelectNext",
+      "up": "menu::SelectPrevious",
+    },
+  },
+  {
     "context": "NotebookEditor > Editor",
     "bindings": {
       "enter": "editor::Newline",
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "cmd-enter": "notebook::Run",
       "cmd-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",

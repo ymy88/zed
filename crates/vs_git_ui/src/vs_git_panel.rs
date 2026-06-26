@@ -134,7 +134,9 @@ impl VsGitPanel {
                 move |this: &mut Self, _git_store, event, window, cx| match event {
                     GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::StatusesChanged | RepositoryEvent::BranchChanged,
+                        RepositoryEvent::StatusesChanged
+                        | RepositoryEvent::HeadChanged
+                        | RepositoryEvent::BranchListChanged,
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
@@ -969,7 +971,7 @@ impl VsGitPanel {
                     DropdownMenu::new("repo-selector", repo_name, menu)
                         .style(DropdownStyle::Ghost)
                         .trigger_size(ui::ButtonSize::Compact)
-                        .attach(gpui::Corner::BottomLeft)
+                        .attach(gpui::Anchor::BottomLeft)
                 )
                 .child(
                     Label::new("/")
@@ -987,8 +989,8 @@ impl VsGitPanel {
     fn render_entries(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("status-entries")
-            .flex_grow()
-            .flex_shrink()
+            .flex_grow(1.)
+            .flex_shrink(1.)
             .min_h_0()
             .overflow_y_scroll()
             .children(
@@ -1085,7 +1087,7 @@ impl VsGitPanel {
             .child(
                 h_flex()
                     .gap_1()
-                    .flex_grow()
+                    .flex_grow(1.)
                     .child(
                         Label::new(group.label())
                             .size(LabelSize::Small)
@@ -1172,7 +1174,7 @@ impl VsGitPanel {
             .child(
                 h_flex()
                     .gap_1()
-                    .flex_grow()
+                    .flex_grow(1.)
                     .overflow_x_hidden()
                     .child(
                         Label::new(filename)
@@ -1334,7 +1336,7 @@ impl VsGitPanel {
         v_flex()
             .id("compared-section")
             .w_full()
-            .flex_shrink()
+            .flex_shrink(1.)
             .min_h_0()
             .child(
                 h_flex()
@@ -1369,7 +1371,7 @@ impl VsGitPanel {
                     .child(
                         h_flex()
                             .gap_1()
-                            .flex_grow()
+                            .flex_grow(1.)
                             .child(
                                 Label::new(format!("Compared to {}", base_branch))
                                     .size(LabelSize::Small)
@@ -1391,7 +1393,7 @@ impl VsGitPanel {
                     v_flex()
                         .id("compared-content")
                         .w_full()
-                        .flex_shrink()
+                        .flex_shrink(1.)
                         .min_h_0()
                         .overflow_y_scroll()
                         .children(file_elements)
@@ -1448,7 +1450,7 @@ impl VsGitPanel {
             .child(
                 h_flex()
                     .gap_1()
-                    .flex_grow()
+                    .flex_grow(1.)
                     .overflow_x_hidden()
                     .child(
                         Label::new(filename)
@@ -1554,7 +1556,7 @@ impl VsGitPanel {
             .child(
                 h_flex()
                     .gap_1()
-                    .flex_grow()
+                    .flex_grow(1.)
                     .child(
                         Label::new("Commit History")
                             .size(LabelSize::Small)
@@ -1648,7 +1650,7 @@ impl VsGitPanel {
                 }
             }),
         )
-        .flex_grow()
+        .flex_grow(1.)
         .with_sizing_behavior(ListSizingBehavior::Auto)
         .track_scroll(&self.history_scroll_handle)
     }
@@ -1695,7 +1697,7 @@ impl VsGitPanel {
             )
             .child(
                 h_flex()
-                    .flex_grow()
+                    .flex_grow(1.)
                     .overflow_x_hidden()
                     .gap_1()
                     .child(
@@ -1770,7 +1772,7 @@ impl VsGitPanel {
             .child(
                 h_flex()
                     .gap_1()
-                    .flex_grow()
+                    .flex_grow(1.)
                     .overflow_x_hidden()
                     .child(
                         Label::new(filename)
@@ -1898,8 +1900,8 @@ impl Render for VsGitPanel {
             .child(
                 v_flex()
                     .id("top-section")
-                    .flex_grow()
-                    .flex_shrink()
+                    .flex_grow(1.)
+                    .flex_shrink(1.)
                     .min_h_0()
                     .justify_start()
                     .child(self.render_branch_indicator(window, cx))
@@ -1946,14 +1948,14 @@ impl Render for VsGitPanel {
                                     .id("history-section")
                                     .w_full()
                                     .when(!history_collapsed, |el| {
-                                        el.flex_grow().min_h_0()
+                                        el.flex_grow(1.).min_h_0()
                                     })
                                     .child(self.render_history_header_standalone(cx))
                                     .when(!history_collapsed, |el| {
                                         el.child(
                                             v_flex()
                                                 .id("history-content")
-                                                .flex_grow()
+                                                .flex_grow(1.)
                                                 .min_h_0()
                                                 .overflow_hidden()
                                                 .child(self.render_history_list(window, cx)),

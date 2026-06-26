@@ -1,10 +1,10 @@
 use crate::{BufferDiagnosticsEditor, ProjectDiagnosticsEditor, ToggleDiagnosticsRefresh};
 use gpui::{Context, EventEmitter, ParentElement, Render, Window};
 use language::DiagnosticEntry;
+use settings::Settings;
 use text::{Anchor, BufferId};
 use ui::{Tooltip, prelude::*};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, item::ItemHandle};
-use zed_actions::assistant::InlineAssist;
 use zed_actions::buffer_search;
 
 pub struct ToolbarControls {
@@ -63,17 +63,6 @@ impl Render for ToolbarControls {
                     ))
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(buffer_search::Deploy::find()), cx);
-                    })
-            })
-            .child({
-                IconButton::new("inline_assist", IconName::ZedAssistant)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::for_action_title(
-                        "Inline Assist",
-                        &InlineAssist::default(),
-                    ))
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(InlineAssist::default()), cx);
                     })
             })
             .map(|div| {

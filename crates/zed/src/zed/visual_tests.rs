@@ -81,7 +81,6 @@ pub async fn open_test_workspace(
     cx: &mut VisualTestAppContext,
 ) -> Result<WindowHandle<workspace::Workspace>> {
     let window_size = size(px(1280.0), px(800.0));
-
     let project = cx.update(|cx| {
         project::Project::local(
             app_state.client.clone(),
@@ -440,7 +439,7 @@ mod tests {
         let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
         let app_state = init_visual_test(&mut cx);
 
-        smol::block_on(async {
+        gpui::block_on(async {
             app_state
                 .fs
                 .as_fake()
@@ -455,7 +454,7 @@ mod tests {
                 .await;
         });
 
-        let workspace_result = smol::block_on(open_test_workspace(app_state, &mut cx));
+        let workspace_result = gpui::block_on(open_test_workspace(app_state, &mut cx));
         assert!(
             workspace_result.is_ok(),
             "Failed to open workspace: {:?}",
@@ -481,7 +480,7 @@ mod tests {
         let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
         let app_state = init_visual_test(&mut cx);
 
-        smol::block_on(async {
+        gpui::block_on(async {
             app_state
                 .fs
                 .as_fake()
@@ -497,10 +496,10 @@ mod tests {
                 .await;
         });
 
-        let workspace = smol::block_on(open_test_workspace(app_state, &mut cx))
+        let workspace = gpui::block_on(open_test_workspace(app_state, &mut cx))
             .expect("Failed to open workspace");
 
-        smol::block_on(async {
+        gpui::block_on(async {
             wait_for_ui_stabilization(&cx).await;
 
             let screenshot_result = cx.capture_screenshot(workspace.into());
