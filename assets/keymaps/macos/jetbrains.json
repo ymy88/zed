@@ -96,7 +96,6 @@
   {
     "context": "AcpThreadSearchBar > Editor",
     "bindings": {
-      "shift-enter": "agent::SelectPreviousThreadMatch",
     },
   },
   {
