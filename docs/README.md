@@ -4,11 +4,14 @@ Welcome to Zed's documentation.
 
 This is built on push to `main` and published automatically to [https://zed.dev/docs](https://zed.dev/docs).
 
-To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/) (`cargo install mdbook@0.4.40`) and then run:
+To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/) (`cargo install mdbook@0.4.40`), generate the action metadata, and then serve:
 
 ```sh
+script/generate-action-metadata
 mdbook serve docs
 ```
+
+The first command dumps an action manifest to `crates/docs_preprocessor/actions.json`. Without it, the preprocessor cannot validate keybinding and action references in the docs and will report errors. You only need to re-run it when actions change.
 
 It's important to note the version number above. For an unknown reason, as of 2025-04-23, running 0.4.48 will cause odd URL behavior that breaks things.
 
@@ -47,7 +50,7 @@ When referencing keybindings or actions, use the following formats:
 
 ### Keybindings
 
-`{#kb scope::Action}` - e.g., `{#kb zed::OpenSettings}`.
+{#kb scope::Action} - e.g., {#kb zed::OpenSettings}.
 
 This will output a code element like: `<code>Cmd + , | Ctrl + ,</code>`. We then use a client-side plugin to show the actual keybinding based on the user's platform.
 
@@ -63,7 +66,7 @@ Supported overlays: `jetbrains`.
 
 ### Actions
 
-`{#action scope::Action}` - e.g., `{#action zed::OpenSettings}`.
+{#action scope::Action} - e.g., {#action zed::OpenSettings}.
 
 This will render a human-readable version of the action name, e.g., "zed: open settings", and will allow us to implement things like additional context on hover, etc.
 
