@@ -21,12 +21,11 @@ use crate::application_menu::{
 
 use auto_update::AutoUpdateStatus;
 use client::{Client, UserStore, zed_urls};
-use command_palette_hooks::CommandPaletteFilter;
 
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, TaskExt, WeakEntity, Window, actions, div,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
     pulsating_between,
 };
 use onboarding_banner::OnboardingBanner;
@@ -35,9 +34,8 @@ use project::{
     trusted_worktrees::TrustedWorktrees,
 };
 use remote::RemoteConnectionOptions;
-use settings::{Settings as _, SettingsStore};
+use settings::Settings as _;
 
-use std::any::TypeId;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ActiveTheme;

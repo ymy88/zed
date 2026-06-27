@@ -1,8 +1,7 @@
 use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
-    AudioInputDeviceName, AudioOutputDeviceName, EditPredictionDataCollectionChoice,
-    LanguageSettingsContent, SemanticTokens, SettingsContent,
+    EditPredictionDataCollectionChoice, LanguageSettingsContent, SemanticTokens, SettingsContent,
 };
 use std::sync::{Arc, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
@@ -22,10 +21,6 @@ const DEFAULT_STRING: String = String::new();
 /// to avoid the "NO DEFAULT" case.
 const DEFAULT_EMPTY_STRING: Option<&String> = Some(&DEFAULT_STRING);
 
-const DEFAULT_AUDIO_OUTPUT: AudioOutputDeviceName = AudioOutputDeviceName(None);
-const DEFAULT_EMPTY_AUDIO_OUTPUT: Option<&AudioOutputDeviceName> = Some(&DEFAULT_AUDIO_OUTPUT);
-const DEFAULT_AUDIO_INPUT: AudioInputDeviceName = AudioInputDeviceName(None);
-const DEFAULT_EMPTY_AUDIO_INPUT: Option<&AudioInputDeviceName> = Some(&DEFAULT_AUDIO_INPUT);
 
 macro_rules! concat_sections {
     (@vec, $($arr:expr),+ $(,)?) => {{

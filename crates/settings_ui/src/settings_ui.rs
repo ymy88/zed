@@ -49,7 +49,7 @@ use workspace::{
     client_side_decorations,
 };
 use zed_actions::{
-    AGENT_SKILLS_SETTINGS_PATH, OpenProjectSettings, OpenSettings, OpenSettingsAt,
+    OpenProjectSettings, OpenSettings, OpenSettingsAt,
     OpenSettingsAtTarget,
 };
 
@@ -869,7 +869,6 @@ pub struct SettingsWindow {
     /// Stable focus handle for the MCP "Add Server" button, so it can show a
     /// focus ring when the page auto-focuses it on open (which happens via mouse,
     /// where `focus_visible` styling would otherwise be suppressed).
-    pub(crate) mcp_add_server_focus_handle: FocusHandle,
     /// State for the active "add/edit custom external agent" form sub-page, if open.
     pub(crate) custom_agent_form: Option<CustomAgentForm>,
     /// Stable focus handle for the external agents "Add Agent" button, so it can
@@ -1859,7 +1858,6 @@ impl SettingsWindow {
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
             last_copied_skill_directory_path: None,
-            mcp_add_server_focus_handle: cx.focus_handle(),
             custom_agent_form: None,
             external_agent_add_focus_handle: cx.focus_handle(),
         };
@@ -5016,7 +5014,6 @@ pub mod test {
                 configuring_provider: None,
                 last_copied_skill_directory_path: None,
                 mcp_server_form: None,
-                mcp_add_server_focus_handle: cx.focus_handle(),
                 custom_agent_form: None,
                 external_agent_add_focus_handle: cx.focus_handle(),
                 skill_creator_page: None,
@@ -5152,7 +5149,6 @@ pub mod test {
             configuring_provider: None,
             last_copied_skill_directory_path: None,
             mcp_server_form: None,
-            mcp_add_server_focus_handle: cx.focus_handle(),
             custom_agent_form: None,
             external_agent_add_focus_handle: cx.focus_handle(),
             skill_creator_page: None,

@@ -4,7 +4,7 @@
 mod reliability;
 mod zed;
 
-use anyhow::{Context as _, Error, Result};
+use anyhow::{Context as _, Result};
 use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore, parse_zed_link};
@@ -14,11 +14,11 @@ use db::kvp::{GlobalKeyValueStore, KeyValueStore};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::{StreamExt, channel::oneshot, future};
+use futures::{StreamExt, channel::oneshot};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
-    App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, Task, TaskExt,
+    App, AppContext, Application, AsyncApp, QuitMode, Task, TaskExt,
     UpdateGlobal as _, block_on,
 };
 use gpui_platform;
@@ -56,7 +56,7 @@ use uuid::Uuid;
 use workspace::{
     AppState, MultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace, Toast,
     WorkspaceSettings, WorkspaceStore,
-    notifications::{NotificationId, NotifyResultExt},
+    notifications::NotificationId,
     restore_multiworkspace,
 };
 use zed::{

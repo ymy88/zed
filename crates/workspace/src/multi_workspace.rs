@@ -6,9 +6,8 @@ use gpui::{
     Window, WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
-use project::{DisableAiSettings, Project};
+use project::Project;
 use remote::RemoteConnectionOptions;
-use settings::Settings;
 pub use settings::SidebarSide;
 use std::cell::Cell;
 use std::future::Future;

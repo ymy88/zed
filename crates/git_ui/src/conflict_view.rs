@@ -5,19 +5,16 @@ use editor::{
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{
-    App, ClickEvent, Context, Empty, Entity, InteractiveElement as _, ParentElement as _,
+    App, Context, Entity, InteractiveElement as _, ParentElement as _,
     Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, BufferId};
 use project::{
-    ConflictRegion, ConflictSet, ConflictSetUpdate, Project,
-    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
+    ConflictRegion, ConflictSet, ConflictSetUpdate,
 };
-use settings::Settings;
 use std::{ops::Range, sync::Arc};
-use ui::{ButtonLike, Divider, Tooltip, prelude::*};
+use ui::prelude::*;
 use util::{debug_panic, maybe};
-use workspace::{HideStatusItem, StatusItemView, Workspace, item::ItemHandle};
 
 pub(crate) struct ConflictAddon {
     buffers: HashMap<BufferId, BufferConflicts>,
