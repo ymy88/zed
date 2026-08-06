@@ -60,3 +60,6 @@ crates/docs_preprocessor/actions.json
 .nixos-test-history
 
 .codegraph/
+
+# Superpowers specs/plans (local agent working docs)
+/docs/superpowers/
