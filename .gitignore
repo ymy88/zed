@@ -59,5 +59,8 @@ crates/docs_preprocessor/actions.json
 # NixOS integration test state
 .nixos-test-history
 
+# .codegraph index (local codegraph tooling)
+.codegraph/
+
 # Superpowers specs/plans (local agent working docs)
 /docs/superpowers/
