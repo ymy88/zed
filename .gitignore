@@ -58,3 +58,6 @@ crates/docs_preprocessor/actions.json
 
 # NixOS integration test state
 .nixos-test-history
+
+# Superpowers specs/plans (local agent working docs)
+/docs/superpowers/
