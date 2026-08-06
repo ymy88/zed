@@ -11,7 +11,8 @@ use crate::{
     text_finder::TextFinder,
 };
 use anyhow::Context as _;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
+use text::BufferId;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
@@ -240,6 +241,7 @@ pub struct ProjectSearch {
     pub excerpts: Entity<MultiBuffer>,
     pub pending_search: Option<Task<Option<SearchResults<SearchResult>>>>,
     pub match_ranges: Vec<Range<Anchor>>,
+    pub matched_buffer_ids: HashSet<BufferId>,
     pub(crate) active_query: Option<SearchQuery>,
     last_search_query_text: Option<String>,
     pub search_id: usize,
@@ -333,6 +335,7 @@ impl ProjectSearch {
             excerpts,
             pending_search: Default::default(),
             match_ranges: Default::default(),
+            matched_buffer_ids: Default::default(),
             active_query: None,
             last_search_query_text: None,
             search_id: 0,
@@ -357,6 +360,7 @@ impl ProjectSearch {
                 excerpts,
                 pending_search: Default::default(),
                 match_ranges: self.match_ranges.clone(),
+                matched_buffer_ids: self.matched_buffer_ids.clone(),
                 active_query: self.active_query.clone(),
                 last_search_query_text: self.last_search_query_text.clone(),
                 search_id: self.search_id,
@@ -455,11 +459,13 @@ impl ProjectSearch {
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
+        self.matched_buffer_ids.clear();
         self.search_state = SearchState::Running(SearchActivity::Searching);
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
             project_search
                 .update(cx, |project_search, cx| {
                     project_search.match_ranges.clear();
+                    project_search.matched_buffer_ids.clear();
                     project_search
                         .excerpts
                         .update(cx, |excerpts, cx| excerpts.clear(cx));
@@ -570,6 +576,11 @@ async fn consume_search_stream(
             smol::future::yield_now().await;
             project_search
                 .update(cx, |project_search, cx| {
+                    project_search
+                        .matched_buffer_ids
+                        .extend(new_ranges.iter().filter_map(|r| {
+                            r.start.raw_text_anchor().map(|a| a.buffer_id)
+                        }));
                     project_search.match_ranges.extend(new_ranges);
                     cx.notify();
                 })
@@ -5315,6 +5326,46 @@ pub mod tests {
                     search_view.entity.read(cx).match_ranges.len(),
                     1,
                     "Should only have match from the remaining file"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_matched_file_count(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file_a.txt": "hello world hello",
+                "file_b.txt": "hello universe",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "hello", cx);
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let model = search_view.entity.read(cx);
+                assert_eq!(model.match_ranges.len(), 3, "three matches total");
+                assert_eq!(
+                    model.matched_buffer_ids.len(),
+                    2,
+                    "should dedupe to 2 distinct files"
                 );
             })
             .unwrap();
