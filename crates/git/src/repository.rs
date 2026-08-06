@@ -3307,7 +3307,9 @@ impl GitRepository for RealGitRepository {
                 let git = git_binary;
 
                 // Walk back from HEAD through decorated commits to find the
-                // first branch ref that isn't the current branch.
+                // first remote tracking ref that isn't the current branch.
+                // Only origin/ refs are considered: the Compared-to section
+                // diffs against origin, never local branches.
                 let output = git
                     .build_command(&[
                         "log",
@@ -3326,8 +3328,6 @@ impl GitRepository for RealGitRepository {
 
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 // Each line looks like: abc1234 (refs/heads/develop, refs/remotes/origin/develop) commit msg
-                // Walk through lines. On each line, collect candidate branch names.
-                // Prefer local branches (refs/heads/) over remote ones (refs/remotes/origin/).
                 for line in stdout.lines() {
                     let Some(start) = line.find('(') else {
                         continue;
@@ -3337,25 +3337,13 @@ impl GitRepository for RealGitRepository {
                     };
                     let refs_str = &line[start + 1..end];
 
-                    let mut local_candidate: Option<String> = None;
-                    let mut remote_candidate: Option<String> = None;
-
                     for ref_entry in refs_str.split(',') {
                         let ref_entry = ref_entry.trim();
-                        if let Some(branch) = ref_entry.strip_prefix("refs/heads/") {
-                            if branch != current_branch && local_candidate.is_none() {
-                                local_candidate = Some(branch.to_string());
-                            }
-                        } else if let Some(remote_branch) = ref_entry.strip_prefix("refs/remotes/origin/") {
-                            if remote_branch != "HEAD" && remote_branch != current_branch && remote_candidate.is_none() {
-                                remote_candidate = Some(remote_branch.to_string());
+                        if let Some(remote_branch) = ref_entry.strip_prefix("refs/remotes/origin/") {
+                            if remote_branch != "HEAD" && remote_branch != current_branch {
+                                return Ok(Some(format!("origin/{}", remote_branch).into()));
                             }
                         }
-                    }
-
-                    // Prefer local branch, fall back to remote
-                    if let Some(branch) = local_candidate.or(remote_candidate) {
-                        return Ok(Some(branch.into()));
                     }
                 }
 
