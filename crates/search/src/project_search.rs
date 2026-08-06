@@ -2339,11 +2339,14 @@ impl Render for ProjectSearchBar {
                 let match_quantity = project_search.match_ranges.len();
                 if match_quantity > 0 {
                     debug_assert!(match_quantity >= index);
-                    if limit_reached {
-                        Some(format!("{index}/{match_quantity}+"))
+                    let file_count = project_search.matched_buffer_ids.len();
+                    let files_label = if file_count == 1 { "file" } else { "files" };
+                    let base = if limit_reached {
+                        format!("{index}/{match_quantity}+")
                     } else {
-                        Some(format!("{index}/{match_quantity}"))
-                    }
+                        format!("{index}/{match_quantity}")
+                    };
+                    Some(format!("{base} · {file_count} {files_label}"))
                 } else {
                     None
                 }
