@@ -224,7 +224,7 @@ impl VsGitPanel {
 
         log::info!("compared-section: finding base branch for {:?}", current_branch);
 
-        // Try default_branch first (uses origin/HEAD), fall back to parent_branch (git log)
+        // Try parent_branch first (git log --simplify-by-decoration), fall back to default_branch (origin/HEAD)
         let default_rx = repo.update(cx, |repo, _cx| {
             repo.default_branch(true)
         });
@@ -234,25 +234,30 @@ impl VsGitPanel {
 
         let current_branch_name = current_branch.clone();
         cx.spawn_in(window, async move |this, cx| {
-            // Step 1: try default_branch (origin/HEAD)
-            let base_name = match default_rx.await {
-                Ok(Ok(Some(default_branch))) => {
-                    let name = default_branch.split('/').last()
-                        .unwrap_or(&default_branch).to_string();
-                    if name == current_branch_name {
-                        log::info!("compared-section: on default branch {:?}, skipping", name);
-                        return;
-                    }
-                    log::info!("compared-section: default_branch returned {:?}", name);
-                    SharedString::from(name)
+            // parent_branch is tried first; the default-branch skip below only
+            // fires when it returns None (parent_branch self-filters the
+            // current branch, so the section never shows "Compared to {self}").
+            // Step 1: try parent_branch (git log --simplify-by-decoration)
+            let base_name = match parent_rx.await {
+                Ok(Ok(Some(parent))) => {
+                    log::info!("compared-section: parent_branch returned {:?}", parent);
+                    parent
                 }
                 _ => {
-                    // Step 2: fall back to parent_branch (git log --simplify-by-decoration)
-                    log::info!("compared-section: default_branch failed, trying parent_branch");
-                    match parent_rx.await {
-                        Ok(Ok(Some(parent))) => {
-                            log::info!("compared-section: parent_branch returned {:?}", parent);
-                            parent
+                    // Step 2: fall back to default_branch (origin/HEAD)
+                    log::info!("compared-section: parent_branch failed, trying default_branch");
+                    match default_rx.await {
+                        Ok(Ok(Some(default_branch))) => {
+                            // default_branch may carry a remote prefix (e.g. "origin/main");
+                            // strip only to check whether we're on the default branch itself.
+                            let name = default_branch.split('/').last()
+                                .unwrap_or(&default_branch).to_string();
+                            if name == current_branch_name {
+                                log::info!("compared-section: on default branch {:?}, skipping", name);
+                                return;
+                            }
+                            log::info!("compared-section: default_branch returned {:?}", default_branch);
+                            SharedString::from(default_branch)
                         }
                         _ => {
                             log::info!("compared-section: no base branch found for {:?}", current_branch_name);
