@@ -35,27 +35,28 @@ pub mod thread_worktree_archive;
 
 pub mod threads_archive_view;
 mod ui;
+mod unicode_confusables;
 
 use std::rc::Rc;
 use std::sync::Arc;
 
 use ::ui::IconName;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
-    Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, TaskExt, Window,
-    actions,
+    Action, App, Context, Entity, ImageSource, ReadGlobal as _, Resource, SharedString, SharedUri,
+    TaskExt, Window, actions,
 };
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
 };
 use language_model::{
-    ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+    LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::{AgentId, DisableAiSettings};
 use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
@@ -65,13 +66,12 @@ use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
-use workspace::Workspace;
+use workspace::{OpenOptions, Workspace};
 
-use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
+use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{
-    AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, MaxIdleRetainedThreads, TerminalId,
-    ThreadTitleRegenerationResult,
+    AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, TerminalId, ThreadTitleRegenerationResult,
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
@@ -118,40 +118,68 @@ pub(crate) fn resolve_agent_image(
     None
 }
 
+/// Opens `abs_path` in the workspace, moving the cursor to `point` when one
+/// is given. Paths outside every worktree are only opened when a file exists
+/// there, so broken agent links don't create empty buffers.
 pub(crate) fn open_abs_path_at_point(
     workspace: &mut Workspace,
     abs_path: PathBuf,
-    point: Point,
+    point: Option<Point>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> bool {
-    let project = workspace.project();
-    let Some(path) = project.update(cx, |project, cx| project.find_project_path(abs_path, cx))
-    else {
-        return false;
-    };
-
-    let item = workspace.open_path(path, None, true, window, cx);
+) {
+    let project_path = workspace
+        .project()
+        .update(cx, |project, cx| project.find_project_path(&abs_path, cx));
+    let fs = workspace.project().read(cx).fs().clone();
+    let workspace = cx.weak_entity();
     window
         .spawn(cx, async move |cx| {
-            let Some(editor) = item.await?.downcast::<Editor>() else {
+            let item = if let Some(project_path) = project_path {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_path(project_path, None, true, window, cx)
+                    })?
+                    .await?
+            } else {
+                let metadata = fs.metadata(&abs_path).await?;
+                anyhow::ensure!(
+                    metadata.is_some_and(|metadata| !metadata.is_dir),
+                    "no file found at path {abs_path:?}"
+                );
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_abs_path(
+                            abs_path,
+                            OpenOptions {
+                                focus: Some(true),
+                                ..Default::default()
+                            },
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await?
+            };
+            let Some(point) = point else {
                 return Ok(());
             };
-            let range = point..point;
+            let Some(editor) = item.downcast::<Editor>() else {
+                return Ok(());
+            };
             editor
                 .update_in(cx, |editor, window, cx| {
                     editor.change_selections(
                         SelectionEffects::scroll(Autoscroll::center()),
                         window,
                         cx,
-                        |selections| selections.select_ranges([range]),
+                        |selections| selections.select_ranges([point..point]),
                     );
                 })
                 .ok();
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
-    true
 }
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
@@ -318,6 +346,11 @@ actions!(
 pub struct AuthorizeToolCall {
     /// The tool call ID to authorize.
     pub tool_call_id: String,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub request_id: Option<acp_thread::PermissionRequestId>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     /// The permission option ID to use.
     pub option_id: String,
     /// The kind of permission option (serialized as string).
@@ -332,6 +365,11 @@ pub struct AuthorizeToolCall {
 pub struct SelectPermissionGranularity {
     /// The tool call ID for which to select the granularity.
     pub tool_call_id: String,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub request_id: Option<acp_thread::PermissionRequestId>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     /// The index of the selected granularity option.
     pub index: usize,
 }
@@ -343,6 +381,11 @@ pub struct SelectPermissionGranularity {
 pub struct ToggleCommandPattern {
     /// The tool call ID for which to toggle the pattern.
     pub tool_call_id: String,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub request_id: Option<acp_thread::PermissionRequestId>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     /// The index of the command pattern to toggle.
     pub pattern_index: usize,
 }
@@ -352,49 +395,6 @@ pub struct ToggleCommandPattern {
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewThread;
-
-/// The kind of context server to configure when adding a new one.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ContextServerType {
-    /// A context server that runs locally via stdin/stdout.
-    #[default]
-    Local,
-    /// A context server that is connected to over HTTP.
-    Remote,
-}
-
-/// Adds a context server to the configuration.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = agent)]
-#[serde(deny_unknown_fields)]
-pub struct AddContextServer {
-    /// The kind of context server to add.
-    #[serde(default)]
-    pub context_server_type: ContextServerType,
-}
-
-impl Default for AddContextServer {
-    fn default() -> Self {
-        Self::local()
-    }
-}
-
-impl AddContextServer {
-    /// Returns an action that adds a local (stdin/stdout) context server.
-    pub fn local() -> Self {
-        Self {
-            context_server_type: ContextServerType::Local,
-        }
-    }
-
-    /// Returns an action that adds a remote (HTTP) context server.
-    pub fn remote() -> Self {
-        Self {
-            context_server_type: ContextServerType::Remote,
-        }
-    }
-}
 
 /// Creates a new external agent conversation thread.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -430,7 +430,7 @@ where
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewNativeAgentThreadFromSummary {
-    from_session_id: acp::SessionId,
+    from_session_id: acp_v1::SessionId,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -513,11 +513,11 @@ impl Agent {
 /// Content to initialize new external agent with.
 pub enum AgentInitialContent {
     ThreadSummary {
-        session_id: acp::SessionId,
+        session_id: acp_v1::SessionId,
         title: Option<SharedString>,
     },
     ContentBlock {
-        blocks: Vec<acp::ContentBlock>,
+        blocks: Vec<acp_v2::ContentBlock>,
         auto_submit: bool,
     },
     FromExternalSource(ExternalSourcePrompt),
@@ -552,7 +552,7 @@ pub(crate) enum ModelUsageContext {
 }
 
 impl ModelUsageContext {
-    pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
+    pub fn model(&self, cx: &App) -> Option<LanguageModel> {
         match self {
             Self::InlineAssistant => {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
@@ -628,16 +628,12 @@ pub fn init(
         init_language_model_settings(cx);
     }
     agent_panel::init(cx);
-    context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
+    context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);
 
     inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
     terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
-    cx.observe_new(move |workspace, window, cx| {
-        ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
-    })
-    .detach();
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
             move |workspace: &mut Workspace,
@@ -883,15 +879,12 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_namespace("multi_workspace");
         }
 
-        // Hide `agent: manage skills` — skills are surfaced through the
-        // settings UI now. Applied after the disable-ai / agent-enabled
-        // branches so it overrides the `show_namespace("assistant")` call
-        // above without affecting the rest of that namespace's actions.
+        // Skills are surfaced through the settings UI now, so this command
+        // should never appear in the palette.
+        filter.hide_action_types(&manage_skills_action);
         if !disable_ai {
-            filter.hide_action_types(&manage_skills_action);
             filter.show_action_types(skill_creator_actions.iter());
         } else {
-            filter.show_action_types(manage_skills_action.iter());
             filter.hide_action_types(&skill_creator_actions);
         }
     });
@@ -904,11 +897,12 @@ fn init_language_model_settings(cx: &mut App) {
         .detach();
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
-        |_, event: &language_model::Event, cx| match event {
+        |registry, event: &language_model::Event, cx| match event {
             language_model::Event::ProviderStateChanged(_)
             | language_model::Event::AddedProvider(_)
             | language_model::Event::RemovedProvider(_)
             | language_model::Event::ProvidersChanged => {
+                registry.update(cx, |registry, cx| registry.refresh_fallback_model(cx));
                 update_active_language_model_from_settings(cx);
             }
             _ => {}
@@ -927,6 +921,12 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         }
     }
 
+    let should_use_fallback = SettingsStore::global(cx)
+        .raw_user_settings()
+        .and_then(|user| user.content.agent.as_ref())
+        .and_then(|agent| agent.default_model.as_ref())
+        .is_none();
+
     let default = settings.default_model.as_ref().map(to_selected_model);
     let inline_assistant = settings
         .inline_assistant_model
@@ -940,6 +940,7 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         .thread_summary_model
         .as_ref()
         .map(to_selected_model);
+    let compaction = settings.compaction_model.as_ref().map(to_selected_model);
     let inline_alternatives = settings
         .inline_alternatives
         .iter()
@@ -951,7 +952,9 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         registry.select_inline_assistant_model(inline_assistant.as_ref(), cx);
         registry.select_commit_message_model(commit_message.as_ref(), cx);
         registry.select_thread_summary_model(thread_summary.as_ref(), cx);
+        registry.select_compaction_model(compaction.as_ref(), cx);
         registry.select_inline_alternative_models(inline_alternatives, cx);
+        registry.set_should_use_fallback(should_use_fallback);
     });
 }
 
@@ -993,14 +996,17 @@ mod tests {
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
+            commit_message_include_project_rules: true,
             commit_message_instructions: None,
             thread_summary_model: None,
+            compaction_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],
             default_profile: AgentProfileId::default(),
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
             play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
+            prevent_idle_sleep: true,
             single_file_review: false,
             model_parameters: vec![],
             auto_compact: agent_settings::AutoCompactSettings {
@@ -1018,7 +1024,12 @@ mod tests {
             sandbox_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            sidebar_side: Default::default(),
+            max_idle_retained_threads: 5,
+            threads_sidebar: agent_settings::ThreadsSidebarSettings {
+                auto_open: true,
+                default_width: px(300.),
+                position: settings::SidebarDockPosition::Left,
+            },
             thinking_display: Default::default(),
         };
 
@@ -1056,6 +1067,10 @@ mod tests {
             assert!(
                 !filter.is_hidden(&zed_actions::assistant::OpenProjectAgentsMdRules),
                 "OpenProjectAgentsMdRules should be visible by default"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::ManageSkills),
+                "ManageSkills should be hidden even when AI is enabled"
             );
         });
 
@@ -1132,6 +1147,29 @@ mod tests {
             assert!(
                 filter.is_hidden(&AcceptEditPrediction),
                 "EditPrediction should be hidden when provider is None"
+            );
+        });
+
+        // Disable AI entirely
+        cx.update(|cx| {
+            AgentSettings::override_global(agent_settings.clone(), cx);
+            DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::ManageSkills),
+                "ManageSkills should be hidden when AI is disabled"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::OpenSkillCreator),
+                "OpenSkillCreator should be hidden when AI is disabled"
+            );
+            assert!(
+                filter.is_hidden(&NewThread),
+                "NewThread should be hidden when AI is disabled"
             );
         });
     }

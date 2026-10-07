@@ -64,3 +64,5 @@ crates/docs_preprocessor/actions.json
 
 # Superpowers specs/plans (local agent working docs)
 /docs/superpowers/
+.local*
+.cache

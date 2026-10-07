@@ -1,6 +1,6 @@
 use collections::HashSet;
 use git::{
-    repository::{CommitFile, CommitFileStatus, FileHistoryEntry, RepoPath},
+    repository::{CommitFileStatus, FileHistoryEntry, RepoPath},
     status::{FileStatus, StageStatus},
 };
 use gpui::{
@@ -10,7 +10,7 @@ use gpui::{
 };
 use gpui_util::ResultExt as _;
 use project::{
-    git_store::{GitStoreEvent, Repository, RepositoryEvent},
+    git_store::{CommitFile, GitStoreEvent, Repository, RepositoryEvent},
     Project, ProjectPath,
 };
 use ui::{prelude::*, Color, ContextMenu, DropdownMenu, DropdownStyle, Icon, IconButton, IconName, IconSize, Label, LabelCommon, Tooltip};
@@ -250,14 +250,14 @@ impl VsGitPanel {
                         Ok(Ok(Some(default_branch))) => {
                             // default_branch may carry a remote prefix (e.g. "origin/main");
                             // strip only to check whether we're on the default branch itself.
-                            let name = default_branch.split('/').last()
+                            let name = default_branch.rsplit('/').next()
                                 .unwrap_or(&default_branch).to_string();
                             if name == current_branch_name {
                                 log::info!("compared-section: on default branch {:?}, skipping", name);
                                 return;
                             }
                             log::info!("compared-section: default_branch returned {:?}", default_branch);
-                            SharedString::from(default_branch)
+                            default_branch
                         }
                         _ => {
                             log::info!("compared-section: no base branch found for {:?}", current_branch_name);
@@ -351,12 +351,10 @@ impl VsGitPanel {
             return;
         };
         let commit_sha = sha.to_string();
-        let rx = repo.update(cx, |repo, _cx| {
-            repo.load_commit_diff(commit_sha)
-        });
+        let task = repo.update(cx, |repo, cx| repo.load_commit_diff(commit_sha, false, cx));
 
         cx.spawn_in(window, async move |this, cx| {
-            if let Ok(Ok(commit_diff)) = rx.await {
+            if let Some(commit_diff) = task.await.log_err() {
                 this.update(cx, |this, cx| {
                     this.commit_files.insert(sha.clone(), commit_diff.files);
                     this.rebuild_entries(cx);
@@ -633,7 +631,7 @@ impl VsGitPanel {
             .values()
             .map(|repo| (repo.read(cx).display_name(), repo.clone()))
             .collect();
-        result.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        result.sort_by_key(|entry| entry.0.to_lowercase());
         result
     }
 
@@ -687,7 +685,7 @@ impl VsGitPanel {
         }
 
         if !status.is_created() {
-            let checkout_path = repo_path.clone();
+            let checkout_path = repo_path;
             cx.spawn_in(window, async move |this, cx| {
                 let open_task = workspace.update(cx, |workspace, cx| {
                     let path = repo
@@ -716,7 +714,7 @@ impl VsGitPanel {
             })
             .detach_and_log_err(cx);
         } else {
-            let delete_path = repo_path.clone();
+            let delete_path = repo_path;
             cx.spawn_in(window, async move |_this, cx| {
                 let delete_task = workspace.update(cx, |workspace, cx| {
                     let path = repo
@@ -725,7 +723,7 @@ impl VsGitPanel {
                     path.map(|p| {
                         workspace
                             .project()
-                            .update(cx, |project, cx| project.delete_file(p, true, cx))
+                            .update(cx, |project, cx| project.trash_file(p, cx))
                     })
                 })?;
 
@@ -1147,7 +1145,7 @@ impl VsGitPanel {
         let parent = path_ref
             .parent()
             .map(|p: &util::rel_path::RelPath| {
-                p.display(util::paths::PathStyle::Posix).to_string()
+                p.display(util::paths::PathStyle::Unix).to_string()
             })
             .filter(|p: &String| !p.is_empty());
 
@@ -1353,10 +1351,10 @@ impl VsGitPanel {
                     .bg(cx.theme().colors().surface_background)
                     .cursor_pointer()
                     .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                    .tooltip(Tooltip::text(format!(
+                    .tooltip(Tooltip::text(
                         "Target branch is determined by the remote repository's default branch (origin/HEAD). \
                          If unavailable, falls back to the nearest parent branch in git history."
-                    )))
+                    ))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.compared_collapsed = !this.compared_collapsed;
                         if !this.compared_collapsed {
@@ -1418,7 +1416,7 @@ impl VsGitPanel {
         let parent = path_ref
             .parent()
             .map(|p: &util::rel_path::RelPath| {
-                p.display(util::paths::PathStyle::Posix).to_string()
+                p.display(util::paths::PathStyle::Unix).to_string()
             })
             .filter(|p: &String| !p.is_empty());
 
@@ -1445,7 +1443,7 @@ impl VsGitPanel {
             .cursor_pointer()
             .on_click({
                 let click_path = path.clone();
-                let click_base = base_branch.clone();
+                let click_base = base_branch;
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.selected_compared_entry = Some(ix);
                     this.open_compared_file_diff(click_base.clone(), click_path.clone(), window, cx);
@@ -1485,7 +1483,7 @@ impl VsGitPanel {
         };
         let full_path: SharedString = path.as_unix_str().to_string().into();
         let filename: SharedString = path.as_ref().file_name().unwrap_or("").to_string().into();
-        let base_display: SharedString = base_ref.split('/').last()
+        let base_display: SharedString = base_ref.rsplit('/').next()
             .unwrap_or(base_ref.as_ref()).to_string().into();
 
         // Check if this diff is already open
@@ -1613,7 +1611,6 @@ impl VsGitPanel {
             "vs-git-history-list",
             entry_count,
             cx.processor({
-                let list_entries = list_entries.clone();
                 move |this: &mut Self, range: std::ops::Range<usize>, _window, cx| {
                     range
                         .map(|ix| {
@@ -1685,7 +1682,7 @@ impl VsGitPanel {
             })
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
             .on_click({
-                let click_sha = sha.clone();
+                let click_sha = sha;
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
                     this.toggle_commit(click_sha.clone(), window, cx);
@@ -1744,7 +1741,7 @@ impl VsGitPanel {
         let parent = path_ref
             .parent()
             .map(|p: &util::rel_path::RelPath| {
-                p.display(util::paths::PathStyle::Posix).to_string()
+                p.display(util::paths::PathStyle::Unix).to_string()
             })
             .filter(|p: &String| !p.is_empty());
 
@@ -1766,7 +1763,7 @@ impl VsGitPanel {
             })
             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
             .on_click({
-                let click_sha = _sha.clone();
+                let click_sha = _sha;
                 let click_path = path.clone();
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
@@ -1980,8 +1977,6 @@ impl Focusable for VsGitPanel {
 }
 
 impl EventEmitter<PanelEvent> for VsGitPanel {}
-
-impl panel::PanelHeader for VsGitPanel {}
 
 impl Panel for VsGitPanel {
     fn persistent_name() -> &'static str {

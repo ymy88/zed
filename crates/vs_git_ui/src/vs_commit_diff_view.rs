@@ -1,5 +1,5 @@
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, MultiBuffer};
+use editor::{Editor, EditorEvent, HiddenDiffHunkRenderer, MultiBuffer};
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
     SharedString, Styled as _, Subscription, Task, Window,
@@ -74,14 +74,10 @@ impl VsCommitDiffView {
         });
         let rhs_editor = cx.new(|cx| {
             let mut editor = Editor::for_multibuffer(rhs_multibuffer, None, window, cx);
-            editor.start_temporary_diff_override();
+            // Hide default hunk controls
+            editor.set_diff_hunk_renderer(Some(Arc::new(HiddenDiffHunkRenderer)), cx);
             editor.disable_diagnostics(cx);
             editor.set_show_breakpoints(false, cx);
-            // Hide default hunk controls
-            editor.set_render_diff_hunk_controls(
-                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                cx,
-            );
             editor
         });
 
@@ -299,7 +295,7 @@ fn insert_alignment_blocks(
                 .max(0) as u32;
             let lhs_row = lhs_row.min(lhs_snapshot.max_point().row);
             let anchor = lhs_snapshot.anchor_before(
-                multi_buffer::MultiBufferPoint::new(lhs_row.saturating_sub(1).max(0), 0),
+                multi_buffer::MultiBufferPoint::new(lhs_row.saturating_sub(1), 0),
             );
 
             let height = line_diff as u32;
@@ -408,12 +404,12 @@ impl Render for VsCommitDiffView {
                         // Reset horizontal scroll on both editors to prevent drift
                         this.lhs_editor.update(cx, |editor, cx| {
                             let mut pos = editor.scroll_position(cx);
-                            pos.x = 0.0.into();
+                            pos.x = 0.0;
                             editor.set_scroll_position(pos, window, cx);
                         });
                         this.rhs_editor.update(cx, |editor, cx| {
                             let mut pos = editor.scroll_position(cx);
-                            pos.x = 0.0.into();
+                            pos.x = 0.0;
                             editor.set_scroll_position(pos, window, cx);
                         });
                     }
