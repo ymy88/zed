@@ -1,6 +1,6 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Bias, Editor, EditorEvent, MultiBuffer};
+use editor::{Bias, Editor, EditorEvent, HiddenUnstagedDiffHunkRenderer, MultiBuffer};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
     IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription, Task,
@@ -85,11 +85,6 @@ impl VsFileDiffView {
                     project.open_unstaged_diff(buffer.clone(), cx)
                 })
                 .await?;
-
-            // Mark unstaged diff so hunks report correct status
-            unstaged_diff.update(cx, |diff, _cx| {
-                diff.set_all_hunks_unstaged(true);
-            });
 
             // Read base texts
             let index_text = unstaged_diff.read_with(cx, |diff, cx| {
@@ -194,16 +189,13 @@ impl VsFileDiffView {
         let rhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(rhs_multibuffer, Some(project.clone()), window, cx);
-            editor.start_temporary_diff_override();
+            // Hide default hunk controls — we render icons in the divider area instead.
+            // Every hunk here is unstaged, so never draw the hollow "staged" style.
+            editor.set_diff_hunk_renderer(Some(Arc::new(HiddenUnstagedDiffHunkRenderer)), cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_diagnostics(cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_line_number_suffix("+");
-            // Hide default hunk controls — we render icons in the divider area instead
-            editor.set_render_diff_hunk_controls(
-                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                cx,
-            );
             editor
         });
 
@@ -297,7 +289,7 @@ impl VsFileDiffView {
                         project.languages().clone()
                     });
                     if let Ok(language) = language_registry
-                        .load_language_for_file_path(&pp.path.as_std_path().to_path_buf())
+                        .load_language_for_file_path(pp.path.as_std_path())
                         .await
                     {
                         lhs_editor.update(cx, |editor, cx| {
@@ -536,7 +528,7 @@ impl VsFileDiffView {
                     .max(0) as u32;
                 let lhs_row = lhs_row.min(lhs_snapshot.max_point().row);
                 let anchor = lhs_snapshot.anchor_before(
-                    multi_buffer::MultiBufferPoint::new(lhs_row.saturating_sub(1).max(0), 0),
+                    multi_buffer::MultiBufferPoint::new(lhs_row.saturating_sub(1), 0),
                 );
 
                 let height = diff as u32;
@@ -718,22 +710,19 @@ impl Render for VsFileDiffView {
                                                 .all_buffers().into_iter().next();
                                             if let Some(buffer) = buffer {
                                                 let buffer_snapshot = buffer.read(cx).snapshot();
-                                                let file_exists = buffer_snapshot.file()
-                                                    .is_some_and(|file| file.disk_state().exists());
                                                 let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
-                                                let matching_hunks: Vec<_> = uncommitted_snapshot
+                                                let ranges: Vec<_> = uncommitted_snapshot
                                                     .hunks(&buffer_snapshot)
                                                     .filter(|h| {
                                                         (h.range.start.row <= hunk_row && h.range.end.row >= hunk_row)
                                                             || (hunk_row == 0 && h.range.start.row == 0)
                                                     })
+                                                    .map(|h| h.buffer_range)
                                                     .collect();
-                                                if !matching_hunks.is_empty() {
-                                                    uncommitted_diff.update(cx, |diff, cx| {
-                                                        diff.stage_or_unstage_hunks(
-                                                            true, &matching_hunks, &buffer_snapshot, file_exists, cx,
-                                                        );
-                                                    });
+                                                if !ranges.is_empty()
+                                                    && let Some(operations) = uncommitted_diff.read(cx).operations()
+                                                {
+                                                    operations.stage(uncommitted_diff.clone(), Some(buffer), ranges, cx);
                                                 }
                                             }
                                         }

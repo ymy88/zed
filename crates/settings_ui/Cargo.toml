@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/settings_ui.rs"
+doctest = false
 
 [features]
 default = []
@@ -17,10 +18,11 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+client.workspace = true
+cloud_api_types.workspace = true
 component.workspace = true
 codestral.workspace = true
 collections.workspace = true
-cloud_api_types.workspace = true
 copilot.workspace = true
 copilot_ui.workspace = true
 edit_prediction.workspace = true
@@ -75,5 +77,7 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
-title_bar = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-shear]
+ignored = ["component"]
