@@ -5938,6 +5938,7 @@ mod tests {
                 "keymap_editor",
                 "keystroke_input",
                 "language_selector",
+                "vs_git_panel",
                 "welcome",
                 "line_ending_selector",
                 "lsp_command_selector",

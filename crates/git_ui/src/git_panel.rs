@@ -14504,6 +14504,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[ignore = "vs-git replaces GitPanel with VsGitPanel, so git_panel::ToggleFocus is not registered"]
     async fn test_focus_handle(cx: &mut TestAppContext) {
         init_test(cx);
 
